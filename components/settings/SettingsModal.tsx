@@ -155,24 +155,30 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                                   </div>
                                   {/* Ẩn chọn model ảnh khi ở chế độ OpenAI theo yêu cầu */}
                                 </>
-                              ) : apiConfig.service === 'google' ? (
-                                  <Select value={apiConfig.googleModel} onChange={e => apiConfig.setGoogleModel(e.target.value)}>
-                                  <option value="gemini-2.5-flash-image">Gemini 2.5 Flash Image (Mặc định)</option>
-                                  <option value="imagen-4.0-generate-001">Imagen 4 (Tạo ảnh nhanh)</option>
-                                  <option value="gemini-2.5-flash-image-preview">Nano-banana (Sửa ảnh &amp; tham chiếu)</option>
-                                  </Select>
                               ) : apiConfig.service === 'openai' ? (
-                                  <div className="flex h-10 w-full items-center rounded-md border border-slate-700/80 bg-slate-900/50 px-3 py-2 text-base text-slate-500">
-                                      OpenAI chỉ hỗ trợ text generation
-                                  </div>
-                              ) : (
-                                  <Select value={apiConfig.aivideoautoModel} onChange={e => apiConfig.setAivideoautoModel(e.target.value)} disabled={apiConfig.aivideoautoStatus !== 'valid'}>
-                                      {apiConfig.aivideoautoModels.length > 0 ? (
-                                          apiConfig.aivideoautoModels.map(m => <option key={m.id} value={m.id}>{m.name}</option>)
-                                      ) : (
-                                          <option>Chưa có model</option>
-                                      )}
+                                <div className="flex h-10 w-full items-center rounded-md border border-slate-700/80 bg-slate-900/50 px-3 py-2 text-base text-slate-500">Vui lòng nhập API Key để sử dụng.</div>
+                              ) : apiConfig.service === 'google' ? (
+                                (apiConfig.googleApiStatus === 'valid' || apiConfig.googleApiStatus === 'env_configured') ? (
+                                  <Select value={apiConfig.googleModel} onChange={e => apiConfig.setGoogleModel(e.target.value)}>
+                                    <option value="gemini-2.5-flash-image">Gemini 2.5 Flash Image (Mặc định)</option>
+                                    <option value="imagen-4.0-generate-001">Imagen 4 (Tạo ảnh nhanh)</option>
+                                    <option value="gemini-2.5-flash-image-preview">Nano-banana (Sửa ảnh &amp; tham chiếu)</option>
                                   </Select>
+                                ) : (
+                                  <div className="flex h-10 w-full items-center rounded-md border border-slate-700/80 bg-slate-900/50 px-3 py-2 text-base text-slate-500">Vui lòng nhập API Key để sử dụng.</div>
+                                )
+                              ) : (
+                                apiConfig.aivideoautoStatus === 'valid' ? (
+                                  <Select value={apiConfig.aivideoautoModel} onChange={e => apiConfig.setAivideoautoModel(e.target.value)}>
+                                    {apiConfig.aivideoautoModels.length > 0 ? (
+                                      apiConfig.aivideoautoModels.map(m => <option key={m.id} value={m.id}>{m.name}</option>)
+                                    ) : (
+                                      <option>Chưa có model</option>
+                                    )}
+                                  </Select>
+                                ) : (
+                                  <div className="flex h-10 w-full items-center rounded-md border border-slate-700/80 bg-slate-900/50 px-3 py-2 text-base text-slate-500">Vui lòng nhập API Key để sử dụng.</div>
+                                )
                               )}
                           </div>
                           <div>
@@ -188,16 +194,20 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                                           <option value="veo-2.0-generate-001">Veo 2 (8 giây, 720p/1080p)</option>
                                       </Select>
                                   ) : (
-                                      <div className="flex h-10 w-full items-center rounded-md border border-slate-700/80 bg-slate-900/50 px-3 py-2 text-base text-slate-500">{t('videoNotSupportedByGoogle')}</div>
+                                      <div className="flex h-10 w-full items-center rounded-md border border-slate-700/80 bg-slate-900/50 px-3 py-2 text-base text-slate-500">Vui lòng nhập API Key để sử dụng.</div>
                                   )
                               ) : apiConfig.service === 'aivideoauto' ? (
-                                  <Select value={apiConfig.aivideoautoVideoModel} onChange={e => apiConfig.setAivideoautoVideoModel(e.target.value)} disabled={apiConfig.aivideoautoStatus !== 'valid'}>
+                                  apiConfig.aivideoautoStatus === 'valid' ? (
+                                    <Select value={apiConfig.aivideoautoVideoModel} onChange={e => apiConfig.setAivideoautoVideoModel(e.target.value)}>
                                       {apiConfig.aivideoautoVideoModels.length > 0 ? (
-                                          apiConfig.aivideoautoVideoModels.map(m => <option key={m.id} value={m.id}>{m.name}</option>)
+                                        apiConfig.aivideoautoVideoModels.map(m => <option key={m.id} value={m.id}>{m.name}</option>)
                                       ) : (
-                                          <option>Chưa có model video</option>
+                                        <option>Chưa có model video</option>
                                       )}
-                                  </Select>
+                                    </Select>
+                                  ) : (
+                                    <div className="flex h-10 w-full items-center rounded-md border border-slate-700/80 bg-slate-900/50 px-3 py-2 text-base text-slate-500">Vui lòng nhập API Key để sử dụng.</div>
+                                  )
                               ) : null}
                           </div>
                       </div>
