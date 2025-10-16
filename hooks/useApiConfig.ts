@@ -31,6 +31,8 @@ export default function useApiConfig({ onError }: UseApiConfigProps): ApiConfig 
   // Default to gemini flash image to avoid Imagen billing issues by default
   const [googleModel, setGoogleModel] = useState<string>('gemini-2.5-flash-image');
   const [googleVideoModel, setGoogleVideoModel] = useState<string>('veo-2.0-generate-001');
+  const [googleImageModels, setGoogleImageModels] = useState<{ id: string; name: string }[]>([]);
+  const [googleVideoModels, setGoogleVideoModels] = useState<{ id: string; name: string }[]>([]);
   
   // Aivideoauto State
   const [aivideoautoToken, setAivideoautoToken] = useState<string>('');
@@ -69,6 +71,21 @@ export default function useApiConfig({ onError }: UseApiConfigProps): ApiConfig 
     setGoogleValidationError(null);
     try {
       await geminiService.validateApiKey(key);
+      // Load available models per key
+      try {
+        const { imageModels, videoModels } = await geminiService.listAvailableModels(key);
+        setGoogleImageModels(imageModels);
+        setGoogleVideoModels(videoModels);
+        // Keep current selection if still valid, else set to first available
+        if (!imageModels.find(m => m.id === googleModel)) {
+          setGoogleModel(imageModels[0]?.id || 'gemini-2.5-flash-image');
+        }
+        if (!videoModels.find(m => m.id === googleVideoModel)) {
+          setGoogleVideoModel(videoModels[0]?.id || 'veo-2.0-generate-001');
+        }
+      } catch (e) {
+        console.warn('Failed to list Gemini models for key, using defaults.', e);
+      }
       console.log('🟢 [CONFIG] Google API key validation successful');
       setGoogleApiKey(key);
       setGoogleApiStatus('valid');
@@ -306,6 +323,9 @@ export default function useApiConfig({ onError }: UseApiConfigProps): ApiConfig 
     setGoogleModel,
     googleVideoModel,
     setGoogleVideoModel,
+    // dynamic lists
+    googleImageModels,
+    googleVideoModels,
     // OpenAI (prompt-only)
     openaiApiKey,
     saveOpenaiApiKey,

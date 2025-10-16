@@ -160,9 +160,12 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                               ) : apiConfig.service === 'google' ? (
                                 (apiConfig.googleApiStatus === 'valid' || apiConfig.googleApiStatus === 'env_configured') ? (
                                   <Select value={apiConfig.googleModel} onChange={e => apiConfig.setGoogleModel(e.target.value)}>
-                                    <option value="gemini-2.5-flash-image">Gemini 2.5 Flash Image (Mặc định)</option>
-                                    <option value="imagen-4.0-generate-001">Imagen 4 (Tạo ảnh nhanh)</option>
-                                    <option value="gemini-2.5-flash-image-preview">Nano-banana (Sửa ảnh &amp; tham chiếu)</option>
+                                    {(apiConfig as any).googleImageModels?.length
+                                      ? (apiConfig as any).googleImageModels.map((m: any) => <option key={m.id} value={m.id}>{m.name}</option>)
+                                      : (<>
+                                          <option value="gemini-2.5-flash-image">Gemini 2.5 Flash Image (Mặc định)</option>
+                                          <option value="imagen-4.0-generate-001">Imagen 4 (Tạo ảnh nhanh)</option>
+                                        </>)}
                                   </Select>
                                 ) : (
                                   <div className="flex h-10 w-full items-center rounded-md border border-slate-700/80 bg-slate-900/50 px-3 py-2 text-base text-slate-500">Vui lòng nhập API Key để sử dụng.</div>
@@ -191,7 +194,9 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                                           value={apiConfig.googleVideoModel} 
                                           onChange={e => apiConfig.setGoogleVideoModel(e.target.value)}
                                       >
-                                          <option value="veo-2.0-generate-001">Veo 2 (8 giây, 720p/1080p)</option>
+                                          {(apiConfig as any).googleVideoModels?.length
+                                            ? (apiConfig as any).googleVideoModels.map((m: any) => <option key={m.id} value={m.id}>{m.name}</option>)
+                                            : (<option value="veo-2.0-generate-001">Veo 2 (8 giây, 720p/1080p)</option>)}
                                       </Select>
                                   ) : (
                                       <div className="flex h-10 w-full items-center rounded-md border border-slate-700/80 bg-slate-900/50 px-3 py-2 text-base text-slate-500">Vui lòng nhập API Key để sử dụng.</div>

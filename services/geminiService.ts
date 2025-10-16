@@ -78,6 +78,50 @@ export const validateApiKey = async (apiKey: string): Promise<void> => {
   }
 };
 
+/**
+ * Lists available Gemini models for the provided API key and categorizes them.
+ * Falls back to curated defaults if listing is unavailable.
+ */
+export const listAvailableModels = async (apiKey: string): Promise<{ imageModels: { id: string; name: string }[]; videoModels: { id: string; name: string }[] }> => {
+  const ai = new GoogleGenAI({ apiKey });
+  const defaults = {
+    imageModels: [
+      { id: 'gemini-2.5-flash-image', name: 'Gemini 2.5 Flash Image' },
+      { id: 'imagen-4.0-generate-001', name: 'Imagen 4 (Generate)' },
+    ],
+    videoModels: [
+      { id: 'veo-2.0-generate-001', name: 'Veo 2 (8s 720p/1080p)' },
+    ],
+  };
+  try {
+    // @ts-ignore SDK may not type list() yet; use any
+    const r: any = await (ai as any).models.list?.({}) || { models: [] };
+    const models: any[] = r.models || r || [];
+    const toPair = (id: string) => ({ id, name: id });
+    const image = new Map<string, { id: string; name: string }>();
+    const video = new Map<string, { id: string; name: string }>();
+
+    (models as any[]).forEach((m: any) => {
+      const id: string = m?.name || m?.id || '';
+      if (!id) return;
+      const lower = id.toLowerCase();
+      if (lower.includes('image') || lower.includes('imagen') || lower.includes('flash-image')) {
+        image.set(id, toPair(id));
+      }
+      if (lower.includes('veo')) {
+        video.set(id, toPair(id));
+      }
+    });
+
+    const imageModels = image.size > 0 ? Array.from(image.values()) : defaults.imageModels;
+    const videoModels = video.size > 0 ? Array.from(video.values()) : defaults.videoModels;
+    return { imageModels, videoModels };
+  } catch (e) {
+    console.warn('⚠️ [GEMINI API] List models not available, using defaults.', e);
+    return defaults;
+  }
+};
+
 
 /**
  * Generates scene details (prompt, duration, etc.) for a given image.

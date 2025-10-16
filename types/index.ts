@@ -106,6 +106,8 @@ export interface ApiConfig {
   setGoogleModel: (model: string) => void;
   googleVideoModel: string; // Video model
   setGoogleVideoModel: (model: string) => void;
+  googleImageModels?: { id: string; name: string }[];
+  googleVideoModels?: { id: string; name: string }[];
   // OpenAI (prompt-only)
   openaiApiKey?: string;
   saveOpenaiApiKey?: (key: string) => Promise<void>;
