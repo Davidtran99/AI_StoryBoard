@@ -128,7 +128,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
             {/* AI & API Config Tab */}
             <div className={`pt-6 space-y-6 ${activeTab !== 'api' ? 'hidden' : ''}`}>
-              <Card className="bg-slate-900/40">
+              <Card className="bg-slate-900/40 overflow-visible">
                   <CardContent className="pt-6">
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                           <div>
@@ -137,6 +137,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                                   <option value="google">Google API</option>
                                   <option value="openai" disabled={apiConfig.openaiApiStatus !== 'valid'}>OpenAI (Prompt)</option>
                                   <option value="aivideoauto" disabled={apiConfig.aivideoautoStatus !== 'valid'}>Aivideoauto</option>
+                                  <option value="higgsfield" disabled={apiConfig.higgsfieldApiStatus !== 'valid'}>Higgsfield</option>
                               </Select>
                           </div>
                           <div>
@@ -151,6 +152,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                                     <Select value={apiConfig.imageProvider || 'aivideoauto'} onChange={e => apiConfig.setImageProvider && apiConfig.setImageProvider(e.target.value as any)}>
                                       <option value="aivideoauto" disabled={apiConfig.aivideoautoStatus !== 'valid'}>Aivideoauto</option>
                                       <option value="google" disabled={!(apiConfig.googleApiStatus === 'valid' || apiConfig.googleApiStatus === 'env_configured')}>Google (Gemini Image)</option>
+                                      <option value="higgsfield" disabled={apiConfig.higgsfieldApiStatus !== 'valid'}>Higgsfield</option>
                                     </Select>
                                   </div>
                                   {/* Ẩn chọn model ảnh khi ở chế độ OpenAI theo yêu cầu */}
@@ -166,6 +168,18 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                                           <option value="gemini-2.5-flash-image">Gemini 2.5 Flash Image (Mặc định)</option>
                                           <option value="imagen-4.0-generate-001">Imagen 4 (Tạo ảnh nhanh)</option>
                                         </>)}
+                                  </Select>
+                                ) : (
+                                  <div className="flex h-10 w-full items-center rounded-md border border-slate-700/80 bg-slate-900/50 px-3 py-2 text-base text-slate-500">Vui lòng nhập API Key để sử dụng.</div>
+                                )
+                              ) : apiConfig.service === 'higgsfield' ? (
+                                (apiConfig.higgsfieldApiStatus === 'valid' || apiConfig.higgsfieldApiStatus === 'env_configured') ? (
+                                  <Select value={apiConfig.higgsfieldImageModel || ''} onChange={e => apiConfig.setHiggsfieldImageModel && apiConfig.setHiggsfieldImageModel(e.target.value)}>
+                                    {(apiConfig.higgsfieldImageModels && apiConfig.higgsfieldImageModels.length > 0) ? (
+                                      apiConfig.higgsfieldImageModels.map(m => <option key={m.id} value={m.id}>{m.name}</option>)
+                                    ) : (
+                                      <option value="">Loading models...</option>
+                                    )}
                                   </Select>
                                 ) : (
                                   <div className="flex h-10 w-full items-center rounded-md border border-slate-700/80 bg-slate-900/50 px-3 py-2 text-base text-slate-500">Vui lòng nhập API Key để sử dụng.</div>
@@ -213,6 +227,18 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                                   ) : (
                                     <div className="flex h-10 w-full items-center rounded-md border border-slate-700/80 bg-slate-900/50 px-3 py-2 text-base text-slate-500">Vui lòng nhập API Key để sử dụng.</div>
                                   )
+                              ) : apiConfig.service === 'higgsfield' ? (
+                                  apiConfig.higgsfieldApiStatus === 'valid' ? (
+                                    <Select value={apiConfig.higgsfieldVideoModel || ''} onChange={e => apiConfig.setHiggsfieldVideoModel && apiConfig.setHiggsfieldVideoModel(e.target.value)}>
+                                      {(apiConfig.higgsfieldVideoModels && apiConfig.higgsfieldVideoModels.length > 0) ? (
+                                        apiConfig.higgsfieldVideoModels.map(m => <option key={m.id} value={m.id}>{m.name}</option>)
+                                      ) : (
+                                        <option>Chưa có model video</option>
+                                      )}
+                                    </Select>
+                                  ) : (
+                                    <div className="flex h-10 w-full items-center rounded-md border border-slate-700/80 bg-slate-900/50 px-3 py-2 text-base text-slate-500">Vui lòng nhập API Key để sử dụng.</div>
+                                  )
                               ) : null}
                           </div>
                       </div>
@@ -221,30 +247,50 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               {/* OpenAI API (Prompt) - luôn hiển thị để người dùng nhập/lưu key */}
               <Card className="bg-slate-900/40">
                 <CardContent className="pt-6">
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  <div className="space-y-4">
                     <div className="space-y-2">
                       <Label>OpenAI API (Prompt) - API Key</Label>
                       <Input
                         type="password"
                         placeholder="sk-..."
-                        defaultValue={apiConfig.openaiApiKey || ''}
-                        onBlur={(e) => apiConfig.saveOpenaiApiKey && apiConfig.saveOpenaiApiKey(e.target.value)}
+                        value={apiConfig.openaiApiKey || ''}
+                        onChange={(e) => apiConfig.saveOpenaiApiKey && apiConfig.saveOpenaiApiKey(e.target.value, { test: false })}
                       />
-                      <div className="text-sm">
-                        {apiConfig.openaiApiStatus === 'validating' && (
-                          <p className="text-yellow-400 flex items-center"><Loader2 className="h-4 w-4 mr-2 animate-spin"/>Đang kiểm tra key...</p>
-                        )}
-                        {apiConfig.openaiApiStatus === 'valid' && (
-                          <p className="text-green-400 flex items-center"><CheckCircle className="h-4 w-4 mr-2"/>Key hợp lệ. Đã tải {apiConfig.openaiTextModels?.length || 0} model.</p>
-                        )}
-                        {apiConfig.openaiApiStatus === 'error' && (
-                          <p className="text-red-400 flex items-center"><AlertTriangle className="h-4 w-4 mr-2"/>Key không hợp lệ hoặc bị từ chối.</p>
-                        )}
-                        {(!apiConfig.openaiApiStatus || apiConfig.openaiApiStatus === 'idle') && (
-                          <p className="text-slate-400">Nhập key và rời khỏi ô để kiểm tra.</p>
-                        )}
+                      <div className="text-sm md:col-span-2">
+                        <div className="flex justify-between items-center pt-2">
+                          <div className="flex-grow pr-4">
+                            {apiConfig.openaiApiStatus === 'validating' && (
+                              <p className="text-yellow-400 flex items-center"><Loader2 className="h-4 w-4 mr-2 animate-spin"/>Đang kiểm tra key...</p>
+                            )}
+                            {apiConfig.openaiApiStatus === 'valid' && (
+                              <p className="text-green-400 flex items-center"><CheckCircle className="h-4 w-4 mr-2"/>Key hợp lệ. Đã tải {apiConfig.openaiTextModels?.length || 0} model.</p>
+                            )}
+                            {apiConfig.openaiApiStatus === 'error' && (
+                              <div className="text-red-400">
+                                <p className="flex items-center mb-1"><AlertTriangle className="h-4 w-4 mr-2"/>Key không hợp lệ hoặc bị từ chối.</p>
+                                {apiConfig.openaiApiError && (
+                                  <p className="text-sm text-red-300 bg-red-900/20 p-2 rounded border border-red-800/30 break-all">{apiConfig.openaiApiError}</p>
+                                )}
+                              </div>
+                            )}
+                            {(!apiConfig.openaiApiStatus || apiConfig.openaiApiStatus === 'idle') && (
+                              <p className="text-slate-400">Nhập API Key để sử dụng OpenAI.</p>
+                            )}
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <Button size="sm" onClick={() => {
+                              apiConfig.saveOpenaiApiKey && apiConfig.saveOpenaiApiKey(apiConfig.openaiApiKey || '', { test: true });
+                            }} disabled={!apiConfig.openaiApiKey || apiConfig.openaiApiStatus === 'validating'}>
+                              {apiConfig.openaiApiStatus === 'validating' ? <Loader2 className="h-4 w-4 mr-2 animate-spin"/> : null}
+                              Lưu & Kiểm tra
+                            </Button>
+                          </div>
+                        </div>
                       </div>
                       <p className="text-xs text-slate-500">Chỉ được sử dụng để sinh prompt khi "Dịch vụ AI" = OpenAI.</p>
+                      <p className="text-sm text-slate-400">
+                        Lấy API Key tại: <a href="https://platform.openai.com/account/api-keys" target="_blank" rel="noopener noreferrer" className="text-teal-400 hover:underline">platform.openai.com</a>
+                      </p>
                     </div>
                     <div className="space-y-2">
                       <Label>Model (OpenAI)</Label>
@@ -260,6 +306,86 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                         )}
                       </Select>
                     </div>
+                  </div>
+                </CardContent>
+              </Card>
+              {/* Higgsfield API */}
+              <Card className="bg-slate-900/40">
+                <CardContent className="pt-6">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div className="space-y-2">
+                      <Label>Higgsfield Access Token (API Key)</Label>
+                      <Input
+                        className="w-full"
+                        type="password"
+                        placeholder="hf_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+                        value={apiConfig.higgsfieldApiKey || ''}
+                        onChange={(e) => apiConfig.saveHiggsfieldApiKey && apiConfig.saveHiggsfieldApiKey(e.target.value, { test: false })}
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Higgsfield Secret</Label>
+                      <Input
+                        className="w-full"
+                        type="password"
+                        placeholder="Để trống nếu không cần"
+                        value={apiConfig.higgsfieldSecret || ''}
+                        onChange={(e) => apiConfig.saveHiggsfieldSecret && apiConfig.saveHiggsfieldSecret(e.target.value, { test: false })}
+                      />
+                    </div>
+                    <div className="md:col-span-2">
+                      <p className="text-sm text-slate-400">
+                        Lấy Access Token tại: <a href="https://cloud.higgsfield.ai/" target="_blank" rel="noopener noreferrer" className="text-teal-400 hover:underline">cloud.higgsfield.ai</a>
+                      </p>
+                    </div>
+                      <div className="text-sm md:col-span-2">
+                        <div className="flex justify-between items-center pt-2">
+                          <div className="flex-grow pr-4">
+                            {apiConfig.higgsfieldApiStatus === 'validating' && (
+                              <p className="text-yellow-400 flex items-center"><Loader2 className="h-4 w-4 mr-2 animate-spin"/>Đang kiểm tra key...</p>
+                            )}
+                            {apiConfig.higgsfieldApiStatus === 'valid' && (
+                              <div className="text-green-400">
+                                <p className="flex items-center"><CheckCircle className="h-4 w-4 mr-2"/>Key hợp lệ. Đã tải {apiConfig.higgsfieldImageModels?.length || 0} model ảnh, {apiConfig.higgsfieldVideoModels?.length || 0} model video.</p>
+                                {apiConfig.higgsfieldApiError?.includes('insufficient credits') && (
+                                  <p className="text-yellow-400 text-sm mt-1">⚠️ API key hợp lệ nhưng tài khoản chưa đủ credits. Vui lòng nạp tiền tại <a href="https://cloud.higgsfield.ai/" target="_blank" rel="noopener noreferrer" className="underline">cloud.higgsfield.ai</a></p>
+                                )}
+                              </div>
+                            )}
+                            {apiConfig.higgsfieldApiStatus === 'env_configured' && (
+                              <p className="text-blue-400 flex items-center"><CheckCircle className="h-4 w-4 mr-2"/>API key được cấu hình từ file .env. Đã tải {apiConfig.higgsfieldImageModels?.length || 0} model ảnh, {apiConfig.higgsfieldVideoModels?.length || 0} model video.</p>
+                            )}
+                            {apiConfig.higgsfieldApiStatus === 'error' && (
+                              <div className="text-red-400">
+                                <p className="flex items-center mb-2"><AlertTriangle className="h-4 w-4 mr-2"/>Key không hợp lệ hoặc bị từ chối.</p>
+                                {apiConfig.higgsfieldApiError && (
+                                  <div className="text-sm text-red-300 bg-red-900/20 p-2 rounded border border-red-800/30">
+                                    <p className="font-medium mb-1">Chi tiết lỗi:</p>
+                                    <p className="break-all">{apiConfig.higgsfieldApiError}</p>
+                                    <div className="mt-2 text-xs text-red-200">
+                                      <p>• Kiểm tra API Key và Secret có đúng format không</p>
+                                      <p>• Đảm bảo có quyền truy cập API tại <a href="https://cloud.higgsfield.ai/" target="_blank" rel="noopener noreferrer" className="underline">cloud.higgsfield.ai</a></p>
+                                      <p>• Thử lại sau vài phút nếu lỗi network</p>
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
+                            )}
+                            {(!apiConfig.higgsfieldApiStatus || apiConfig.higgsfieldApiStatus === 'idle') && (
+                              <p className="text-slate-400">Nhập API Key để sử dụng dịch vụ Higgsfield.</p>
+                            )}
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <Button size="sm" onClick={() => {
+                              apiConfig.saveHiggsfieldSecret && apiConfig.saveHiggsfieldSecret(apiConfig.higgsfieldSecret || '', { test: false });
+                              apiConfig.saveHiggsfieldApiKey && apiConfig.saveHiggsfieldApiKey(apiConfig.higgsfieldApiKey || '', { test: true });
+                            }} disabled={!apiConfig.higgsfieldApiKey || apiConfig.higgsfieldApiStatus === 'validating'}>
+                              {apiConfig.higgsfieldApiStatus === 'validating' ? <Loader2 className="h-4 w-4 mr-2 animate-spin"/> : null}
+                              Lưu & Kiểm tra
+                            </Button>
+                          </div>
+                        </div>
+                      </div>
                   </div>
                 </CardContent>
               </Card>

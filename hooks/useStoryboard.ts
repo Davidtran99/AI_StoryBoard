@@ -12,10 +12,11 @@ import type {
 } from '../types';
 import * as gemini from '../services/geminiService';
 import * as aivideoauto from '../services/aivideoautoService';
+import * as higgsfield from '../services/higgsfieldService';
 import * as veoService from '../services/veoService';
 import * as openaiService from '../services/openaiService';
 import { readFilesAsDataUrls, compressImage } from '../lib/fileHelper';
-import { uid, formatDuration } from '../lib/utils';
+import { uid, formatDuration, parseApiError } from '../lib/utils';
 import { cameraAngleOptions, transitionOptions, imageShotTypeOptions, cuttingStyleOptions } from '../constants';
 
 const POLLING_INTERVAL_MS = 5000;
@@ -161,8 +162,13 @@ export default function useStoryboard({
   const [characters, setCharacters] = useState<Character[]>([]);
   const [locations, setLocations] = useState<Location[]>([]);
   const [idea, setIdea] = useState<string>('');
+  const [lyrics, setLyrics] = useState<string>('');
+  const [visualNotes, setVisualNotes] = useState<string>('');
+  const [audioFile, setAudioFile] = useState<File | null>(null);
   const [videoDuration, setVideoDuration] = useState<number>(40);
   const [storyOutline, setStoryOutline] = useState<string[]>([]);
+  const [isImporting, setIsImporting] = useState<boolean>(false);
+  const [isExporting, setIsExporting] = useState<boolean>(false);
 
   const [busyState, dispatchBusy] = useReducer(busyReducer, initialBusyState);
   const [batchProgress, setBatchProgress] = useState<BatchProgress | null>(null);
@@ -427,18 +433,25 @@ export default function useStoryboard({
         [...Object.keys(updatedScene)].includes(key)
       );
 
-      if (promptRelevantChange && !data.hasOwnProperty('imagePrompt')) {
+      // Check if any service is ready before auto-generating prompts
+      const openaiReady = apiConfig.openaiApiStatus === 'valid' && !!apiConfig.openaiApiKey;
+      const googleReady = (apiConfig.googleApiStatus === 'valid' || apiConfig.googleApiStatus === 'env_configured') && !!apiConfig.googleApiKey;
+      const higgsfieldReady = apiConfig.higgsfieldApiStatus === 'valid' && !!apiConfig.higgsfieldApiKey;
+      const hasAnyService = openaiReady || googleReady || higgsfieldReady;
+
+      // Only auto-generate prompts if autoGeneratePrompt is enabled AND at least one service is ready
+      if (autoGeneratePrompt && hasAnyService && promptRelevantChange && !data.hasOwnProperty('imagePrompt')) {
         updatedScene.imagePrompt = generateImagePromptForScene(updatedScene, characters, locations);
       }
       
-      if (videoPromptRelevantChange && !data.hasOwnProperty('videoPrompt')) {
+      if (autoGeneratePrompt && hasAnyService && videoPromptRelevantChange && !data.hasOwnProperty('videoPrompt')) {
         updatedScene.videoPrompt = generateVideoPromptForScene(updatedScene, characters, locations);
       }
 
       newScenes[index] = updatedScene;
       return newScenes;
     });
-  }, [generateImagePromptForScene, generateVideoPromptForScene, characters, locations]);
+  }, [generateImagePromptForScene, generateVideoPromptForScene, characters, locations, autoGeneratePrompt, apiConfig]);
 
   const updateCharacter = useCallback((index: number, data: Partial<Character>) => {
     setCharacters(prev => {
@@ -474,12 +487,62 @@ export default function useStoryboard({
     await withBusyState('characters', char.id, async () => {
         let image: UploadedImage;
         const stylePrefix = getImageStylePrefix(videoStyle);
-        if (apiConfig.service === 'google') {
-            image = await gemini.generateCharacterReferenceImage(char.description, videoStyle, aspectRatio, apiConfig.googleModel, apiConfig.googleApiKey);
-        } else {
-            const prompt = `${stylePrefix}, full-body reference shot of a character on a plain background. The character must be fully visible. Description: "${char.description}".`;
-            image = await aivideoauto.generateImageFromPrompt(apiConfig.aivideoautoToken, prompt, -1, apiConfig.aivideoautoModel, undefined, undefined, aspectRatio);
+        
+        // Check which services are available
+        const googleReady = (apiConfig.googleApiStatus === 'valid' || apiConfig.googleApiStatus === 'env_configured') && !!apiConfig.googleApiKey;
+        const higgsfieldReady = apiConfig.higgsfieldApiStatus === 'valid' && !!apiConfig.higgsfieldApiKey;
+        const aivideoReady = apiConfig.aivideoautoStatus === 'valid' && !!apiConfig.aivideoautoToken;
+        
+        const tryGoogle = async () => {
+          if (!googleReady) throw new Error('GOOGLE_NOT_READY');
+          return await gemini.generateCharacterReferenceImage(char.description, videoStyle, aspectRatio, apiConfig.googleModel, apiConfig.googleApiKey);
+        };
+        
+        const tryHiggsfield = async () => {
+          if (!higgsfieldReady) throw new Error('HIGGSFIELD_NOT_READY');
+          const prompt = `${stylePrefix}, full-body reference shot of a character on a plain background. The character must be fully visible. Description: "${char.description}".`;
+          return await higgsfield.generateImageFromPrompt(apiConfig.higgsfieldApiKey, prompt, -1, undefined, undefined, apiConfig.higgsfieldImageModel, videoStyle, aspectRatio, apiConfig.higgsfieldSecret);
+        };
+        
+        const tryAivideo = async () => {
+          if (!aivideoReady) throw new Error('AIVIDEO_NOT_READY');
+          const prompt = `${stylePrefix}, full-body reference shot of a character on a plain background. The character must be fully visible. Description: "${char.description}".`;
+          return await aivideoauto.generateImageFromPrompt(apiConfig.aivideoautoToken, prompt, -1, apiConfig.aivideoautoModel, undefined, undefined, aspectRatio);
+        };
+        
+        // Try primary service first, then fallback to others if available
+        console.log(`🖼️ [CHARACTER IMAGE] Service selection: ${apiConfig.service}, Google ready: ${googleReady}, Google status: ${apiConfig.googleApiStatus}, Google key exists: ${!!apiConfig.googleApiKey}, Higgsfield ready: ${higgsfieldReady}, Aivideo ready: ${aivideoReady}`);
+        try {
+          if (apiConfig.service === 'google') {
+            console.log('🖼️ [CHARACTER IMAGE] Using Google as primary service');
+            image = await tryGoogle();
+          } else if (apiConfig.service === 'higgsfield') {
+            console.log('🖼️ [CHARACTER IMAGE] Using Higgsfield as primary service');
+            image = await tryHiggsfield();
+          } else {
+            console.log('🖼️ [CHARACTER IMAGE] Using Aivideoauto as primary service');
+            image = await tryAivideo();
+          }
+        } catch (primaryError) {
+          console.warn(`Primary service (${apiConfig.service}) failed, trying fallback...`, primaryError);
+          
+          // Try fallback services
+          if (apiConfig.service !== 'google' && googleReady) {
+            console.log('🖼️ [CHARACTER IMAGE] Trying Google as fallback');
+            try { image = await tryGoogle(); } catch {}
+          }
+          if (!image && apiConfig.service !== 'higgsfield' && higgsfieldReady) {
+            console.log('🖼️ [CHARACTER IMAGE] Trying Higgsfield as fallback');
+            try { image = await tryHiggsfield(); } catch {}
+          }
+          if (!image && apiConfig.service !== 'aivideoauto' && aivideoReady) {
+            console.log('🖼️ [CHARACTER IMAGE] Trying Aivideoauto as fallback');
+            try { image = await tryAivideo(); } catch {}
+          }
+          
+          if (!image) throw primaryError;
         }
+        
         const compressedImage = await compressImage(image);
         setCharacters(prev => prev.map(c => c.id === char.id ? { ...c, image: compressedImage, status: 'defined' } : c));
     });
@@ -490,12 +553,62 @@ export default function useStoryboard({
     await withBusyState('locations', loc.id, async () => {
         let image: UploadedImage;
         const stylePrefix = getImageStylePrefix(videoStyle);
-        if (apiConfig.service === 'google') {
-            image = await gemini.generateLocationReferenceImage(loc.description, videoStyle, aspectRatio, apiConfig.googleModel, apiConfig.googleApiKey);
-        } else {
-            const prompt = `${stylePrefix}, wide establishing shot of a location, focusing only on the environment. CRITICAL: Absolutely no characters or people should be visible in the image. Description: "${loc.description}".`;
-            image = await aivideoauto.generateImageFromPrompt(apiConfig.aivideoautoToken, prompt, -1, apiConfig.aivideoautoModel, undefined, undefined, aspectRatio);
+        
+        // Check which services are available
+        const googleReady = (apiConfig.googleApiStatus === 'valid' || apiConfig.googleApiStatus === 'env_configured') && !!apiConfig.googleApiKey;
+        const higgsfieldReady = apiConfig.higgsfieldApiStatus === 'valid' && !!apiConfig.higgsfieldApiKey;
+        const aivideoReady = apiConfig.aivideoautoStatus === 'valid' && !!apiConfig.aivideoautoToken;
+        
+        const tryGoogle = async () => {
+          if (!googleReady) throw new Error('GOOGLE_NOT_READY');
+          return await gemini.generateLocationReferenceImage(loc.description, videoStyle, aspectRatio, apiConfig.googleModel, apiConfig.googleApiKey);
+        };
+        
+        const tryHiggsfield = async () => {
+          if (!higgsfieldReady) throw new Error('HIGGSFIELD_NOT_READY');
+          const prompt = `${stylePrefix}, wide establishing shot of a location, focusing only on the environment. CRITICAL: Absolutely no characters or people should be visible in the image. Description: "${loc.description}".`;
+          return await higgsfield.generateImageFromPrompt(apiConfig.higgsfieldApiKey, prompt, -1, undefined, undefined, apiConfig.higgsfieldImageModel, videoStyle, aspectRatio, apiConfig.higgsfieldSecret);
+        };
+        
+        const tryAivideo = async () => {
+          if (!aivideoReady) throw new Error('AIVIDEO_NOT_READY');
+          const prompt = `${stylePrefix}, wide establishing shot of a location, focusing only on the environment. CRITICAL: Absolutely no characters or people should be visible in the image. Description: "${loc.description}".`;
+          return await aivideoauto.generateImageFromPrompt(apiConfig.aivideoautoToken, prompt, -1, apiConfig.aivideoautoModel, undefined, undefined, aspectRatio);
+        };
+        
+        // Try primary service first, then fallback to others if available
+        console.log(`🖼️ [LOCATION IMAGE] Service selection: ${apiConfig.service}, Google ready: ${googleReady}, Higgsfield ready: ${higgsfieldReady}, Aivideo ready: ${aivideoReady}`);
+        try {
+          if (apiConfig.service === 'google') {
+            console.log('🖼️ [LOCATION IMAGE] Using Google as primary service');
+            image = await tryGoogle();
+          } else if (apiConfig.service === 'higgsfield') {
+            console.log('🖼️ [LOCATION IMAGE] Using Higgsfield as primary service');
+            image = await tryHiggsfield();
+          } else {
+            console.log('🖼️ [LOCATION IMAGE] Using Aivideoauto as primary service');
+            image = await tryAivideo();
+          }
+        } catch (primaryError) {
+          console.warn(`Primary service (${apiConfig.service}) failed, trying fallback...`, primaryError);
+          
+          // Try fallback services
+          if (apiConfig.service !== 'google' && googleReady) {
+            console.log('🖼️ [LOCATION IMAGE] Trying Google as fallback');
+            try { image = await tryGoogle(); } catch {}
+          }
+          if (!image && apiConfig.service !== 'higgsfield' && higgsfieldReady) {
+            console.log('🖼️ [LOCATION IMAGE] Trying Higgsfield as fallback');
+            try { image = await tryHiggsfield(); } catch {}
+          }
+          if (!image && apiConfig.service !== 'aivideoauto' && aivideoReady) {
+            console.log('🖼️ [LOCATION IMAGE] Trying Aivideoauto as fallback');
+            try { image = await tryAivideo(); } catch {}
+          }
+          
+          if (!image) throw primaryError;
         }
+        
         const compressedImage = await compressImage(image);
         setLocations(prev => prev.map(l => l.id === loc.id ? { ...l, image: compressedImage, status: 'defined' } : l));
     });
@@ -507,12 +620,51 @@ export default function useStoryboard({
     await withBusyState('characters', char.id, async () => {
       let image: UploadedImage;
       const stylePrefix = getImageStylePrefix(videoStyle);
-      if (apiConfig.service === 'google') {
-          image = await gemini.generateCharacterReferenceImage(char.description, videoStyle, aspectRatio, apiConfig.googleModel, apiConfig.googleApiKey);
-      } else {
-          const prompt = `${stylePrefix}, full-body reference shot of a character on a plain background. The character must be fully visible. Description: "${char.description}".`;
-          image = await aivideoauto.generateImageFromPrompt(apiConfig.aivideoautoToken, prompt, index, apiConfig.aivideoautoModel, undefined, undefined, aspectRatio);
+      
+      // Check which services are available
+      const googleReady = (apiConfig.googleApiStatus === 'valid' || apiConfig.googleApiStatus === 'env_configured') && !!apiConfig.googleApiKey;
+      const higgsfieldReady = apiConfig.higgsfieldApiStatus === 'valid' && !!apiConfig.higgsfieldApiKey;
+      const aivideoReady = apiConfig.aivideoautoStatus === 'valid' && !!apiConfig.aivideoautoToken;
+      
+      const tryGoogle = async () => {
+        if (!googleReady) throw new Error('GOOGLE_NOT_READY');
+        return await gemini.generateCharacterReferenceImage(char.description, videoStyle, aspectRatio, apiConfig.googleModel, apiConfig.googleApiKey);
+      };
+      
+      const tryHiggsfield = async () => {
+        if (!higgsfieldReady) throw new Error('HIGGSFIELD_NOT_READY');
+        const prompt = `${stylePrefix}, full-body reference shot of a character on a plain background. The character must be fully visible. Description: "${char.description}".`;
+        return await higgsfield.generateImageFromPrompt(apiConfig.higgsfieldApiKey, prompt, index, undefined, undefined, apiConfig.higgsfieldImageModel, videoStyle, aspectRatio, apiConfig.higgsfieldSecret);
+      };
+      
+      const tryAivideo = async () => {
+        if (!aivideoReady) throw new Error('AIVIDEO_NOT_READY');
+        const prompt = `${stylePrefix}, full-body reference shot of a character on a plain background. The character must be fully visible. Description: "${char.description}".`;
+        return await aivideoauto.generateImageFromPrompt(apiConfig.aivideoautoToken, prompt, index, apiConfig.aivideoautoModel, undefined, undefined, aspectRatio);
+      };
+      
+      // Try primary service first, then fallback to others if available
+      try {
+        if (apiConfig.service === 'google') image = await tryGoogle();
+        else if (apiConfig.service === 'higgsfield') image = await tryHiggsfield();
+        else image = await tryAivideo();
+      } catch (primaryError) {
+        console.warn(`Primary service (${apiConfig.service}) failed, trying fallback...`, primaryError);
+        
+        // Try fallback services
+        if (apiConfig.service !== 'google' && googleReady) {
+          try { image = await tryGoogle(); } catch {}
+        }
+        if (!image && apiConfig.service !== 'higgsfield' && higgsfieldReady) {
+          try { image = await tryHiggsfield(); } catch {}
+        }
+        if (!image && apiConfig.service !== 'aivideoauto' && aivideoReady) {
+          try { image = await tryAivideo(); } catch {}
+        }
+        
+        if (!image) throw primaryError;
       }
+      
       const compressedImage = await compressImage(image);
       updateCharacter(index, { image: compressedImage, status: 'defined' });
     });
@@ -524,12 +676,51 @@ export default function useStoryboard({
     await withBusyState('locations', loc.id, async () => {
        let image: UploadedImage;
        const stylePrefix = getImageStylePrefix(videoStyle);
-       if (apiConfig.service === 'google') {
-           image = await gemini.generateLocationReferenceImage(loc.description, videoStyle, aspectRatio, apiConfig.googleModel, apiConfig.googleApiKey);
-       } else {
-           const prompt = `${stylePrefix}, wide establishing shot of a location, focusing only on the environment. CRITICAL: Absolutely no characters or people should be visible in the image. Description: "${loc.description}".`;
-           image = await aivideoauto.generateImageFromPrompt(apiConfig.aivideoautoToken, prompt, index, apiConfig.aivideoautoModel, undefined, undefined, aspectRatio);
+       
+       // Check which services are available
+       const googleReady = (apiConfig.googleApiStatus === 'valid' || apiConfig.googleApiStatus === 'env_configured') && !!apiConfig.googleApiKey;
+       const higgsfieldReady = apiConfig.higgsfieldApiStatus === 'valid' && !!apiConfig.higgsfieldApiKey;
+       const aivideoReady = apiConfig.aivideoautoStatus === 'valid' && !!apiConfig.aivideoautoToken;
+       
+       const tryGoogle = async () => {
+         if (!googleReady) throw new Error('GOOGLE_NOT_READY');
+         return await gemini.generateLocationReferenceImage(loc.description, videoStyle, aspectRatio, apiConfig.googleModel, apiConfig.googleApiKey);
+       };
+       
+       const tryHiggsfield = async () => {
+         if (!higgsfieldReady) throw new Error('HIGGSFIELD_NOT_READY');
+         const prompt = `${stylePrefix}, wide establishing shot of a location, focusing only on the environment. CRITICAL: Absolutely no characters or people should be visible in the image. Description: "${loc.description}".`;
+         return await higgsfield.generateImageFromPrompt(apiConfig.higgsfieldApiKey, prompt, index, undefined, undefined, apiConfig.higgsfieldImageModel, videoStyle, aspectRatio, apiConfig.higgsfieldSecret);
+       };
+       
+       const tryAivideo = async () => {
+         if (!aivideoReady) throw new Error('AIVIDEO_NOT_READY');
+         const prompt = `${stylePrefix}, wide establishing shot of a location, focusing only on the environment. CRITICAL: Absolutely no characters or people should be visible in the image. Description: "${loc.description}".`;
+         return await aivideoauto.generateImageFromPrompt(apiConfig.aivideoautoToken, prompt, index, apiConfig.aivideoautoModel, undefined, undefined, aspectRatio);
+       };
+       
+       // Try primary service first, then fallback to others if available
+       try {
+         if (apiConfig.service === 'google') image = await tryGoogle();
+         else if (apiConfig.service === 'higgsfield') image = await tryHiggsfield();
+         else image = await tryAivideo();
+       } catch (primaryError) {
+         console.warn(`Primary service (${apiConfig.service}) failed, trying fallback...`, primaryError);
+         
+         // Try fallback services
+         if (apiConfig.service !== 'google' && googleReady) {
+           try { image = await tryGoogle(); } catch {}
+         }
+         if (!image && apiConfig.service !== 'higgsfield' && higgsfieldReady) {
+           try { image = await tryHiggsfield(); } catch {}
+         }
+         if (!image && apiConfig.service !== 'aivideoauto' && aivideoReady) {
+           try { image = await tryAivideo(); } catch {}
+         }
+         
+         if (!image) throw primaryError;
        }
+       
        const compressedImage = await compressImage(image);
        updateLocation(index, { image: compressedImage, status: 'defined' });
     });
@@ -595,9 +786,11 @@ export default function useStoryboard({
       
       let blueprint;
       const openaiReady = apiConfig.openaiApiStatus === 'valid' && !!apiConfig.openaiApiKey;
-      const googleReady = apiConfig.googleApiStatus === 'valid' || apiConfig.googleApiStatus === 'env_configured';
+      const googleReady = (apiConfig.googleApiStatus === 'valid' || apiConfig.googleApiStatus === 'env_configured') && !!apiConfig.googleApiKey;
+      const higgsfieldReady = apiConfig.higgsfieldApiStatus === 'valid' && !!apiConfig.higgsfieldApiKey;
 
       const preferOpenAI = apiConfig.service === 'openai';
+      const preferHiggsfield = apiConfig.service === 'higgsfield';
 
       const tryOpenAI = async () => {
         if (!openaiReady) throw new Error('OPENAI_NOT_READY');
@@ -609,6 +802,11 @@ export default function useStoryboard({
         console.log('📝 [STORYBOARD] Using Gemini for blueprint generation...');
         return await gemini.generateBlueprintFromIdea(textToUse, apiConfig.googleApiKey, numScenes, videoStyle);
       };
+      const tryHiggsfield = async () => {
+        if (!higgsfieldReady) throw new Error('HIGGSFIELD_NOT_READY');
+        console.log('📝 [STORYBOARD] Using Higgsfield for blueprint generation...');
+        return await higgsfield.generateBlueprintFromIdea(textToUse, apiConfig.higgsfieldApiKey!, apiConfig.higgsfieldSecret || '', numScenes, videoStyle);
+      };
 
       const isKeyError = (e: any) => {
         const msg = (e && (e.message || e.toString())) as string;
@@ -616,23 +814,46 @@ export default function useStoryboard({
       };
 
       try {
-        blueprint = preferOpenAI ? await tryOpenAI() : await tryGemini();
+        // Primary provider based on service selection
+        if (preferOpenAI) {
+          blueprint = await tryOpenAI();
+        } else if (preferHiggsfield) {
+          blueprint = await tryHiggsfield();
+        } else {
+          blueprint = await tryGemini();
+        }
       } catch (e) {
         console.warn('🔁 [STORYBOARD] Primary provider failed, evaluating fallback...', e);
+        
+        // Fallback chain: try other available providers
+        const fallbackProviders = [];
+        
         if (preferOpenAI) {
-          if (googleReady && (isKeyError(e) || true)) {
-            notify('Đã tự động chuyển sang Gemini do OpenAI lỗi hoặc giới hạn.');
-            blueprint = await tryGemini();
-          } else {
-            throw e;
-          }
+          if (googleReady) fallbackProviders.push({ name: 'Gemini', fn: tryGemini });
+          if (higgsfieldReady) fallbackProviders.push({ name: 'Higgsfield', fn: tryHiggsfield });
+        } else if (preferHiggsfield) {
+          if (openaiReady) fallbackProviders.push({ name: 'OpenAI', fn: tryOpenAI });
+          if (googleReady) fallbackProviders.push({ name: 'Gemini', fn: tryGemini });
         } else {
-          if (openaiReady && (isKeyError(e) || true)) {
-            notify('Đã tự động chuyển sang OpenAI do Gemini lỗi.');
-            blueprint = await tryOpenAI();
-          } else {
-            throw e;
+          if (openaiReady) fallbackProviders.push({ name: 'OpenAI', fn: tryOpenAI });
+          if (higgsfieldReady) fallbackProviders.push({ name: 'Higgsfield', fn: tryHiggsfield });
+        }
+        
+        // Try fallback providers
+        let fallbackSuccess = false;
+        for (const provider of fallbackProviders) {
+          try {
+            notify(`Đã tự động chuyển sang ${provider.name} do provider chính lỗi.`);
+            blueprint = await provider.fn();
+            fallbackSuccess = true;
+            break;
+          } catch (fallbackError) {
+            console.warn(`🔁 [STORYBOARD] Fallback to ${provider.name} also failed:`, fallbackError);
           }
+        }
+        
+        if (!fallbackSuccess) {
+          throw new Error(parseApiError(e));
         }
       }
       
@@ -672,8 +893,10 @@ export default function useStoryboard({
         let sceneData;
 
         const openaiReady = apiConfig.openaiApiStatus === 'valid' && !!apiConfig.openaiApiKey;
-        const googleReady = apiConfig.googleApiStatus === 'valid' || apiConfig.googleApiStatus === 'env_configured';
+        const googleReady = (apiConfig.googleApiStatus === 'valid' || apiConfig.googleApiStatus === 'env_configured') && !!apiConfig.googleApiKey;
+        const higgsfieldReady = apiConfig.higgsfieldApiStatus === 'valid' && !!apiConfig.higgsfieldApiKey;
         const preferOpenAI = apiConfig.service === 'openai';
+        const preferHiggsfield = apiConfig.service === 'higgsfield';
 
         const tryOpenAI = async () => {
           if (!openaiReady) throw new Error('OPENAI_NOT_READY');
@@ -685,29 +908,57 @@ export default function useStoryboard({
           console.log('📝 [STORYBOARD] Using Gemini for scene generation...');
           return await gemini.generateScenesFromBlueprint(blueprint, apiConfig.googleApiKey, numScenes);
         };
+        const tryHiggsfield = async () => {
+          if (!higgsfieldReady) throw new Error('HIGGSFIELD_NOT_READY');
+          console.log('📝 [STORYBOARD] Using Higgsfield for scene generation...');
+          return await higgsfield.generateScenesFromBlueprint(blueprint, apiConfig.higgsfieldApiKey!, apiConfig.higgsfieldSecret || '', numScenes);
+        };
         const isKeyError = (e: any) => {
           const msg = (e && (e.message || e.toString())) as string;
           return /API_KEY_INVALID|Invalid API key|401|403/i.test(msg || '');
         };
 
         try {
-          sceneData = preferOpenAI ? await tryOpenAI() : await tryGemini();
+          // Primary provider based on service selection
+          if (preferOpenAI) {
+            sceneData = await tryOpenAI();
+          } else if (preferHiggsfield) {
+            sceneData = await tryHiggsfield();
+          } else {
+            sceneData = await tryGemini();
+          }
         } catch (e) {
           console.warn('🔁 [STORYBOARD] Primary provider failed (scenes), evaluating fallback...', e);
+          
+          // Fallback chain: try other available providers
+          const fallbackProviders = [];
+          
           if (preferOpenAI) {
-            if (googleReady && (isKeyError(e) || true)) {
-              notify('Đã tự động chuyển sang Gemini (scenes) do OpenAI lỗi hoặc giới hạn.');
-              sceneData = await tryGemini();
-            } else {
-              throw e;
-            }
+            if (googleReady) fallbackProviders.push({ name: 'Gemini', fn: tryGemini });
+            if (higgsfieldReady) fallbackProviders.push({ name: 'Higgsfield', fn: tryHiggsfield });
+          } else if (preferHiggsfield) {
+            if (openaiReady) fallbackProviders.push({ name: 'OpenAI', fn: tryOpenAI });
+            if (googleReady) fallbackProviders.push({ name: 'Gemini', fn: tryGemini });
           } else {
-            if (openaiReady && (isKeyError(e) || true)) {
-              notify('Đã tự động chuyển sang OpenAI (scenes) do Gemini lỗi.');
-              sceneData = await tryOpenAI();
-            } else {
-              throw e;
+            if (openaiReady) fallbackProviders.push({ name: 'OpenAI', fn: tryOpenAI });
+            if (higgsfieldReady) fallbackProviders.push({ name: 'Higgsfield', fn: tryHiggsfield });
+          }
+          
+          // Try fallback providers
+          let fallbackSuccess = false;
+          for (const provider of fallbackProviders) {
+            try {
+              notify(`Đã tự động chuyển sang ${provider.name} (scenes) do provider chính lỗi.`);
+              sceneData = await provider.fn();
+              fallbackSuccess = true;
+              break;
+            } catch (fallbackError) {
+              console.warn(`🔁 [STORYBOARD] Fallback to ${provider.name} (scenes) also failed:`, fallbackError);
             }
+          }
+          
+          if (!fallbackSuccess) {
+            throw new Error(parseApiError(e));
           }
         }
 
@@ -742,8 +993,20 @@ export default function useStoryboard({
                 characterIds: sceneChars.map(c => c.id),
                 locationIds: sceneLocs.map(l => l.id),
             };
-            baseScene.imagePrompt = generateImagePromptForScene(baseScene, characters, locations);
-            baseScene.videoPrompt = generateVideoPromptForScene(baseScene, characters, locations);
+            
+            // Only generate prompts if autoGeneratePrompt is enabled and at least one service is ready
+            if (autoGeneratePrompt) {
+              const openaiReady = apiConfig.openaiApiStatus === 'valid' && !!apiConfig.openaiApiKey;
+              const googleReady = (apiConfig.googleApiStatus === 'valid' || apiConfig.googleApiStatus === 'env_configured') && !!apiConfig.googleApiKey;
+              const higgsfieldReady = apiConfig.higgsfieldApiStatus === 'valid' && !!apiConfig.higgsfieldApiKey;
+              const hasAnyService = openaiReady || googleReady || higgsfieldReady;
+              
+              if (hasAnyService) {
+                baseScene.imagePrompt = generateImagePromptForScene(baseScene, characters, locations);
+                baseScene.videoPrompt = generateVideoPromptForScene(baseScene, characters, locations);
+              }
+            }
+            
             return baseScene;
         });
 
@@ -791,8 +1054,20 @@ export default function useStoryboard({
       characterIds: [],
       locationIds: [],
     };
-    newScene.imagePrompt = generateImagePromptForScene(newScene, characters, locations);
-    newScene.videoPrompt = generateVideoPromptForScene(newScene, characters, locations);
+    
+    // Only generate prompts if autoGeneratePrompt is enabled and at least one service is ready
+    if (autoGeneratePrompt) {
+      const openaiReady = apiConfig.openaiApiStatus === 'valid' && !!apiConfig.openaiApiKey;
+      const googleReady = (apiConfig.googleApiStatus === 'valid' || apiConfig.googleApiStatus === 'env_configured') && !!apiConfig.googleApiKey;
+      const higgsfieldReady = apiConfig.higgsfieldApiStatus === 'valid' && !!apiConfig.higgsfieldApiKey;
+      const hasAnyService = openaiReady || googleReady || higgsfieldReady;
+      
+      if (hasAnyService) {
+        newScene.imagePrompt = generateImagePromptForScene(newScene, characters, locations);
+        newScene.videoPrompt = generateVideoPromptForScene(newScene, characters, locations);
+      }
+    }
+    
     setScenes(prev => [...prev, newScene]);
   }, [scenes.length, aspectRatio, characters, locations, apiConfig, generateImagePromptForScene, generateVideoPromptForScene]);
 
@@ -843,8 +1118,20 @@ export default function useStoryboard({
                 lighting: '', colorPalette: '', soundDesign: '', emotionalTone: '', vfx: 'None',
                 seed: null, strength: null, imageModel: defaultModel, notes: '',
             };
-            baseScene.imagePrompt = generateImagePromptForScene(baseScene, characters, locations);
-            baseScene.videoPrompt = generateVideoPromptForScene(baseScene, characters, locations);
+            
+            // Only generate prompts if autoGeneratePrompt is enabled and at least one service is ready
+            if (autoGeneratePrompt) {
+              const openaiReady = apiConfig.openaiApiStatus === 'valid' && !!apiConfig.openaiApiKey;
+              const googleReady = (apiConfig.googleApiStatus === 'valid' || apiConfig.googleApiStatus === 'env_configured') && !!apiConfig.googleApiKey;
+              const higgsfieldReady = apiConfig.higgsfieldApiStatus === 'valid' && !!apiConfig.higgsfieldApiKey;
+              const hasAnyService = openaiReady || googleReady || higgsfieldReady;
+              
+              if (hasAnyService) {
+                baseScene.imagePrompt = generateImagePromptForScene(baseScene, characters, locations);
+                baseScene.videoPrompt = generateVideoPromptForScene(baseScene, characters, locations);
+              }
+            }
+            
             return baseScene;
         });
 
@@ -857,8 +1144,17 @@ export default function useStoryboard({
                 try {
                     const details = await gemini.generateSceneDetailsForImage(scene.mainImage!, apiConfig.googleApiKey);
                     Object.assign(scene, details);
-                    scene.imagePrompt = generateImagePromptForScene(scene, characters, locations);
-                    scene.videoPrompt = generateVideoPromptForScene(scene, characters, locations);
+                    
+                    // Only generate prompts if at least one service is ready
+                    const openaiReady = apiConfig.openaiApiStatus === 'valid' && !!apiConfig.openaiApiKey;
+                    const googleReady = (apiConfig.googleApiStatus === 'valid' || apiConfig.googleApiStatus === 'env_configured') && !!apiConfig.googleApiKey;
+                    const higgsfieldReady = apiConfig.higgsfieldApiStatus === 'valid' && !!apiConfig.higgsfieldApiKey;
+                    const hasAnyService = openaiReady || googleReady || higgsfieldReady;
+                    
+                    if (hasAnyService) {
+                      scene.imagePrompt = generateImagePromptForScene(scene, characters, locations);
+                      scene.videoPrompt = generateVideoPromptForScene(scene, characters, locations);
+                    }
                 } catch (error) {
                     console.error(`Failed to analyze image for scene ${scene.title}`, error);
                     scene.notes = "Lỗi: Không thể tự động phân tích ảnh này.";
@@ -913,14 +1209,45 @@ export default function useStoryboard({
       let image: UploadedImage;
 
       const openaiReady = apiConfig.openaiApiStatus === 'valid' && !!apiConfig.openaiApiKey;
-      const provider = openaiReady && apiConfig.imageProvider ? apiConfig.imageProvider : (apiConfig.service === 'google' ? 'google' : 'aivideoauto');
-      if (provider === 'google') {
-        const model = scene.imageModel || ((charRefs.length > 0 || locRefs.length > 0) ? 'gemini-2.5-flash-image-preview' : apiConfig.googleModel);
-        image = await gemini.generateImageFromPrompt(modifiedPrompt, index, charRefs, locRefs, model, videoStyle, aspectRatio, apiConfig.googleApiKey);
-      } else {
-        const model = scene.imageModel || apiConfig.aivideoautoModel;
-        image = await aivideoauto.generateImageFromPrompt(apiConfig.aivideoautoToken, modifiedPrompt, index, model, charRefs, locRefs, aspectRatio);
+      const provider: 'google' | 'aivideoauto' | 'higgsfield' = (
+        apiConfig.service === 'higgsfield' ? 'higgsfield'
+        : (openaiReady && apiConfig.imageProvider ? apiConfig.imageProvider : (apiConfig.service === 'google' ? 'google' : 'aivideoauto'))
+      ) as any;
+      const tryWithProvider = async (p: 'google'|'aivideoauto'|'higgsfield'): Promise<UploadedImage> => {
+        if (p === 'google') {
+          const model = scene.imageModel || ((charRefs.length > 0 || locRefs.length > 0) ? 'gemini-2.5-flash-image-preview' : apiConfig.googleModel);
+          return gemini.generateImageFromPrompt(modifiedPrompt, index, charRefs, locRefs, model, videoStyle, aspectRatio, apiConfig.googleApiKey);
+        }
+        if (p === 'aivideoauto') {
+          const model = scene.imageModel || apiConfig.aivideoautoModel;
+          return aivideoauto.generateImageFromPrompt(apiConfig.aivideoautoToken, modifiedPrompt, index, model, charRefs, locRefs, aspectRatio);
+        }
+        const model = scene.imageModel || apiConfig.higgsfieldImageModel || '';
+        return higgsfield.generateImageFromPrompt(apiConfig.higgsfieldApiKey || '', modifiedPrompt, index, charRefs, locRefs, model, videoStyle, aspectRatio, apiConfig.higgsfieldSecret);
+      };
+
+      const order: ('google'|'aivideoauto'|'higgsfield')[] = (() => {
+        const googleReady = (apiConfig.googleApiStatus === 'valid' || apiConfig.googleApiStatus === 'env_configured') && !!apiConfig.googleApiKey;
+        const aivideoautoReady = !!apiConfig.aivideoautoToken;
+        const higgsReady = apiConfig.higgsfieldApiStatus === 'valid';
+        const rest: ('google'|'aivideoauto'|'higgsfield')[] = [];
+        if (provider !== 'google' && googleReady) rest.push('google');
+        if (provider !== 'aivideoauto' && aivideoautoReady) rest.push('aivideoauto');
+        if (provider !== 'higgsfield' && higgsReady) rest.push('higgsfield');
+        return [provider, ...rest];
+      })();
+
+      let lastErr: any;
+      for (const p of order) {
+        try {
+          image = await tryWithProvider(p);
+          break;
+        } catch (e: any) {
+          lastErr = e;
+          (window as any).toast?.(`Tự động chuyển provider do lỗi: ${e?.message || e}`, 'warning');
+        }
       }
+      if (!image && lastErr) throw lastErr;
 
       if (!image) {
         const errorMessage = 'Tạo ảnh thất bại, không nhận được kết quả.';
@@ -961,13 +1288,19 @@ export default function useStoryboard({
       const generationPromises = newShotTypes.map(shotType => {
         const modifiedPrompt = `${shotType}. ${scene.imagePrompt}`;
       const openaiReady2 = apiConfig.openaiApiStatus === 'valid' && !!apiConfig.openaiApiKey;
-      const provider2 = openaiReady2 && apiConfig.imageProvider ? apiConfig.imageProvider : (apiConfig.service === 'google' ? 'google' : 'aivideoauto');
+      const provider2: 'google' | 'aivideoauto' | 'higgsfield' = (
+        apiConfig.service === 'higgsfield' ? 'higgsfield'
+        : (openaiReady2 && apiConfig.imageProvider ? apiConfig.imageProvider : (apiConfig.service === 'google' ? 'google' : 'aivideoauto'))
+      ) as any;
       if (provider2 === 'google') {
           const model = scene.imageModel || ((charRefs.length > 0 || locRefs.length > 0) ? 'gemini-2.5-flash-image-preview' : apiConfig.googleModel);
           return gemini.generateImageFromPrompt(modifiedPrompt, index, charRefs, locRefs, model, videoStyle, aspectRatio, apiConfig.googleApiKey);
-        } else {
+        } else if (provider2 === 'aivideoauto') {
           const model = scene.imageModel || apiConfig.aivideoautoModel;
           return aivideoauto.generateImageFromPrompt(apiConfig.aivideoautoToken, modifiedPrompt, index, model, charRefs, locRefs, aspectRatio);
+        } else {
+          const model = scene.imageModel || apiConfig.higgsfieldImageModel || '';
+          return higgsfield.generateImageFromPrompt(apiConfig.higgsfieldApiKey || '', modifiedPrompt, index, charRefs, locRefs, model, videoStyle, aspectRatio, apiConfig.higgsfieldSecret);
         }
       });
 
@@ -996,6 +1329,11 @@ export default function useStoryboard({
       let newDataUrl: string;
       if (apiConfig.service === 'google') {
         newDataUrl = await gemini.editImageWithPrompt(scene.mainImage!, prompt, apiConfig.googleApiKey, aspectRatio, referenceImages);
+      } else if (apiConfig.service === 'aivideoauto') {
+        const modelToUse = scene.imageModel || apiConfig.aivideoautoModel;
+        newDataUrl = await aivideoauto.editImageWithPrompt(apiConfig.aivideoautoToken, scene.mainImage!, prompt, modelToUse, aspectRatio, referenceImages);
+      } else if (apiConfig.service === 'higgsfield' || apiConfig.imageProvider === 'higgsfield') {
+        newDataUrl = await higgsfield.editImageWithPrompt(scene.mainImage!, prompt, apiConfig.higgsfieldApiKey || '', aspectRatio, referenceImages);
       } else {
         const modelToUse = scene.imageModel || apiConfig.aivideoautoModel;
         newDataUrl = await aivideoauto.editImageWithPrompt(apiConfig.aivideoautoToken, scene.mainImage!, prompt, modelToUse, aspectRatio, referenceImages);
@@ -1086,6 +1424,10 @@ export default function useStoryboard({
           apiConfig.service === 'google' ||
           (apiConfig.service === 'openai' && apiConfig.imageProvider === 'google')
         );
+        const useHiggsfieldVideo = (
+          apiConfig.service === 'higgsfield' ||
+          (apiConfig.service === 'openai' && apiConfig.imageProvider === 'higgsfield')
+        );
 
         const tryVeo = async (): Promise<string> => {
           console.log('🎬 [STORYBOARD] Using Google Veo 2 API for video generation');
@@ -1138,8 +1480,113 @@ export default function useStoryboard({
           return await poll(Date.now());
         };
 
-        const primary = useGoogleVideo ? tryVeo : tryAivideoauto;
-        const secondary = useGoogleVideo ? tryAivideoauto : tryVeo;
+        const tryHiggsfield = async (): Promise<string> => {
+          console.log('🎬 [STORYBOARD] Using Higgsfield API for video generation');
+          
+          // Determine which Higgsfield model to use
+          const model = apiConfig.higgsfieldVideoModel || 'dop-turbo';
+          
+          if (model.includes('speak') || model === 'speak-v2') {
+            // Use Speak v2 for text-to-video
+            console.log('🎬 [STORYBOARD] Using Higgsfield Speak v2 for text-to-video');
+            const result = await higgsfield.generateSpeakVideo(
+              apiConfig.higgsfieldApiKey || '',
+              apiConfig.higgsfieldSecret || '',
+              {
+                text: sceneWithStyledPrompt.videoPrompt || '',
+                quality: '1080p',
+                seed: Math.floor(Math.random() * 1000000)
+              }
+            );
+            
+            // Poll for completion
+            const poll = async (): Promise<string> => {
+              const statusRes = await fetch(`/api/higgsfield/videos/${result.id}`, {
+                headers: {
+                  'x-higgsfield-api-key': apiConfig.higgsfieldApiKey || '',
+                  'x-higgsfield-secret': apiConfig.higgsfieldSecret || '',
+                }
+              });
+              
+              if (!statusRes.ok) throw new Error(await statusRes.text());
+              const statusData = await statusRes.json();
+              const status = (statusData?.status || '').toLowerCase();
+              
+              if (status.includes('done') || status.includes('success') || statusData?.downloadUrl) {
+                const downloadUrl = statusData?.downloadUrl || statusData?.videoUrl || '';
+                if (!downloadUrl) throw new Error('Thiếu downloadUrl.');
+                const resp = await fetch(downloadUrl);
+                const blob = await resp.blob();
+                return URL.createObjectURL(blob);
+              }
+              
+              if (status.includes('error') || status.includes('fail')) {
+                throw new Error(statusData?.message || 'Tạo video thất bại.');
+              }
+              
+              updateScene(index, { videoStatusMessage: statusData?.message || 'Đang tạo video...' });
+              await new Promise(res => setTimeout(res, 8000));
+              return poll();
+            };
+            
+            return await poll();
+          } else {
+            // Use DoP for image-to-video
+            console.log('🎬 [STORYBOARD] Using Higgsfield DoP for image-to-video');
+            
+            if (!sceneWithStyledPrompt.mainImage?.dataUrl) {
+              throw new Error('Cần có ảnh để tạo video từ ảnh.');
+            }
+            
+            const result = await higgsfield.generateVideoFromImage(
+              apiConfig.higgsfieldApiKey || '',
+              apiConfig.higgsfieldSecret || '',
+              {
+                image_url: sceneWithStyledPrompt.mainImage.dataUrl,
+                quality: '1080p',
+                duration: 8,
+                seed: Math.floor(Math.random() * 1000000)
+              }
+            );
+            
+            // Poll for completion
+            const poll = async (): Promise<string> => {
+              const statusRes = await fetch(`/api/higgsfield/videos/${result.id}`, {
+                headers: {
+                  'x-higgsfield-api-key': apiConfig.higgsfieldApiKey || '',
+                  'x-higgsfield-secret': apiConfig.higgsfieldSecret || '',
+                }
+              });
+              
+              if (!statusRes.ok) throw new Error(await statusRes.text());
+              const statusData = await statusRes.json();
+              const status = (statusData?.status || '').toLowerCase();
+              
+              if (status.includes('done') || status.includes('success') || statusData?.downloadUrl) {
+                const downloadUrl = statusData?.downloadUrl || statusData?.videoUrl || '';
+                if (!downloadUrl) throw new Error('Thiếu downloadUrl.');
+                const resp = await fetch(downloadUrl);
+                const blob = await resp.blob();
+                return URL.createObjectURL(blob);
+              }
+              
+              if (status.includes('error') || status.includes('fail')) {
+                throw new Error(statusData?.message || 'Tạo video thất bại.');
+              }
+              
+              updateScene(index, { videoStatusMessage: statusData?.message || 'Đang tạo video...' });
+              await new Promise(res => setTimeout(res, 8000));
+              return poll();
+            };
+            
+            return await poll();
+          }
+        };
+
+        let primary = tryAivideoauto as () => Promise<string>;
+        let secondary = tryVeo as () => Promise<string>;
+        if (useGoogleVideo) { primary = tryVeo; secondary = tryAivideoauto; }
+        if (useHiggsfieldVideo) { primary = tryHiggsfield; secondary = useGoogleVideo ? tryVeo : tryAivideoauto; }
 
         // Backoff once on 429 before fallback
         try {
@@ -1153,7 +1600,7 @@ export default function useStoryboard({
             } catch (e2) {
               const otherReady = useGoogleVideo
                 ? !!apiConfig.aivideoautoToken
-                : (apiConfig.googleApiStatus === 'valid' || apiConfig.googleApiStatus === 'env_configured');
+                : ((apiConfig.googleApiStatus === 'valid' || apiConfig.googleApiStatus === 'env_configured') && !!apiConfig.googleApiKey);
               if (otherReady) {
                 (window as any).toast?.(`Đã tự động chuyển sang ${useGoogleVideo ? 'Aivideoauto' : 'Veo 2'} do lỗi: ${msg}`, 'warning');
                 videoUrl = await secondary();
@@ -1164,7 +1611,7 @@ export default function useStoryboard({
           } else {
             const otherReady = useGoogleVideo
               ? !!apiConfig.aivideoautoToken
-              : (apiConfig.googleApiStatus === 'valid' || apiConfig.googleApiStatus === 'env_configured');
+              : ((apiConfig.googleApiStatus === 'valid' || apiConfig.googleApiStatus === 'env_configured') && !!apiConfig.googleApiKey);
             if (otherReady) {
               (window as any).toast?.(`Đã tự động chuyển sang ${useGoogleVideo ? 'Aivideoauto' : 'Veo 2'} do lỗi: ${msg}`, 'warning');
               videoUrl = await secondary();
@@ -1347,6 +1794,179 @@ export default function useStoryboard({
       saveAs(content, `storyboard_videos_${Date.now()}.zip`);
   }, [scenes]);
 
+  const exportAssets = useCallback(async () => {
+    setIsExporting(true);
+    try {
+      const zip = new JSZip();
+      
+      // Export characters
+      characters.forEach((char, index) => {
+        if (char.image) {
+          zip.file(`characters/${char.name}_${index}.png`, char.image.dataUrl.split(',')[1], { base64: true });
+        }
+      });
+      
+      // Export locations
+      locations.forEach((loc, index) => {
+        if (loc.image) {
+          zip.file(`locations/${loc.name}_${index}.png`, loc.image.dataUrl.split(',')[1], { base64: true });
+        }
+      });
+      
+      // Export scenes
+      scenes.forEach((scene, index) => {
+        if (scene.mainImage) {
+          zip.file(`scenes/scene_${index + 1}.png`, scene.mainImage.dataUrl.split(',')[1], { base64: true });
+        }
+      });
+      
+      // Export metadata
+      const metadata = {
+        idea,
+        lyrics,
+        visualNotes,
+        videoDuration,
+        storyOutline,
+        characters: characters.map(c => ({ name: c.name, description: c.description })),
+        locations: locations.map(l => ({ name: l.name, description: l.description })),
+        scenes: scenes.map(s => ({ title: s.title, imagePrompt: s.imagePrompt, videoPrompt: s.videoPrompt }))
+      };
+      zip.file('metadata.json', JSON.stringify(metadata, null, 2));
+      
+      const content = await zip.generateAsync({ type: "blob" });
+      saveAs(content, `storyboard_assets_${Date.now()}.zip`);
+    } catch (error) {
+      onError('Lỗi khi export assets: ' + (error as Error).message);
+    } finally {
+      setIsExporting(false);
+    }
+  }, [characters, locations, scenes, idea, lyrics, visualNotes, videoDuration, storyOutline, onError]);
+
+  const importAssets = useCallback(async (file: File) => {
+    setIsImporting(true);
+    try {
+      const zip = new JSZip();
+      const zipContent = await zip.loadAsync(file);
+      
+      // Import metadata
+      const metadataFile = zipContent.file('metadata.json');
+      if (metadataFile) {
+        const metadataText = await metadataFile.async('text');
+        const metadata = JSON.parse(metadataText);
+        
+        setIdea(metadata.idea || '');
+        setLyrics(metadata.lyrics || '');
+        setVisualNotes(metadata.visualNotes || '');
+        setVideoDuration(metadata.videoDuration || 40);
+        setStoryOutline(metadata.storyOutline || []);
+        
+        // Import characters
+        if (metadata.characters) {
+          const newCharacters = metadata.characters.map((char: any) => ({
+            id: uid(),
+            name: char.name,
+            description: char.description,
+            image: null,
+            status: 'suggested' as const
+          }));
+          setCharacters(newCharacters);
+        }
+        
+        // Import locations
+        if (metadata.locations) {
+          const newLocations = metadata.locations.map((loc: any) => ({
+            id: uid(),
+            name: loc.name,
+            description: loc.description,
+            image: null,
+            status: 'suggested' as const
+          }));
+          setLocations(newLocations);
+        }
+        
+        // Import scenes
+        if (metadata.scenes) {
+          const newScenes = metadata.scenes.map((scene: any) => ({
+            id: uid(),
+            title: scene.title,
+            imagePrompt: scene.imagePrompt,
+            videoPrompt: scene.videoPrompt,
+            mainImage: null,
+            imageOptions: [],
+            negativePrompt: '',
+            action: '',
+            setting: '',
+            cameraAngle: '',
+            lighting: '',
+            colorPalette: '',
+            soundDesign: '',
+            emotionalTone: '',
+            vfx: '',
+            transition: '',
+            duration: null,
+            aspect: aspectRatio,
+            seed: null,
+            strength: null,
+            notes: '',
+            characterIds: [],
+            locationIds: [],
+            videoUrl: null,
+            videoStatus: 'idle' as const,
+            videoStatusMessage: '',
+            taskId: null
+          }));
+          setScenes(newScenes);
+        }
+      }
+      
+      // Import images
+      const readImageFromZip = async (filename: string): Promise<UploadedImage | null> => {
+        const file = zipContent.file(filename);
+        if (!file) return null;
+        
+        const base64 = await file.async('base64');
+        const mimeType = filename.endsWith('.png') ? 'image/png' : 'image/jpeg';
+        return {
+          name: filename.split('/').pop() || 'image',
+          type: mimeType,
+          size: base64.length,
+          dataUrl: `data:${mimeType};base64,${base64}`
+        };
+      };
+      
+      // Import character images
+      for (let i = 0; i < characters.length; i++) {
+        const char = characters[i];
+        const image = await readImageFromZip(`characters/${char.name}_${i}.png`);
+        if (image) {
+          updateCharacter(i, { image });
+        }
+      }
+      
+      // Import location images
+      for (let i = 0; i < locations.length; i++) {
+        const loc = locations[i];
+        const image = await readImageFromZip(`locations/${loc.name}_${i}.png`);
+        if (image) {
+          updateLocation(i, { image });
+        }
+      }
+      
+      // Import scene images
+      for (let i = 0; i < scenes.length; i++) {
+        const image = await readImageFromZip(`scenes/scene_${i + 1}.png`);
+        if (image) {
+          updateScene(i, { mainImage: image });
+        }
+      }
+      
+    } catch (error) {
+      onError('Lỗi khi import assets: ' + (error as Error).message);
+    } finally {
+      setIsImporting(false);
+    }
+  }, [characters, locations, scenes, aspectRatio, setIdea, setLyrics, setVisualNotes, setVideoDuration, setStoryOutline, setCharacters, setLocations, setScenes, updateCharacter, updateLocation, updateScene, onError]);
+
   // --- Sketch & Annotation Management ---
   const updateSceneAnnotations = useCallback((index: number, annotations: Annotation[]) => {
     updateScene(index, { sketchAnnotations: annotations });
@@ -1374,6 +1994,9 @@ export default function useStoryboard({
     locations,
     aspectRatio,
     idea,
+    lyrics,
+    visualNotes,
+    audioFile,
     storyOutline,
     updateStoryOutline,
     videoDuration,
@@ -1383,9 +2006,14 @@ export default function useStoryboard({
     isGeneratingScenes: busyState.global.has('isGeneratingScenes'),
     isBatchGenerating: busyState.global.has('isBatchGenerating'),
     isGeneratingReferenceImages: busyState.global.has('isGeneratingReferenceImages'),
+    isImporting,
+    isExporting,
     isSceneBusy: (id: string) => busyState.scenes.has(id) || busyState.characters.has(id) || busyState.locations.has(id),
     batchProgress,
     setIdea,
+    setLyrics,
+    setVisualNotes,
+    setAudioFile,
     onUpload,
     addBlankScene,
     updateScene,
@@ -1405,6 +2033,8 @@ export default function useStoryboard({
     generateAllSceneVideos,
     downloadAllSceneImages,
     downloadAllSceneVideos,
+    exportAssets,
+    importAssets,
     addCharacter,
     updateCharacter,
     removeCharacter,

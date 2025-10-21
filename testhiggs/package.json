@@ -1,0 +1,12 @@
+{
+  "name": "testhiggs",
+  "version": "1.0.0",
+  "description": "Test Higgsfield API",
+  "main": "test_api.js",
+  "scripts": {
+    "test": "node test_api.js"
+  },
+  "dependencies": {
+    "node-fetch": "^2.6.7"
+  }
+}

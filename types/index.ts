@@ -80,7 +80,7 @@ export interface Location {
   status: 'suggested' | 'defined';
 }
 
-export type ApiService = 'google' | 'openai' | 'aivideoauto';
+export type ApiService = 'google' | 'openai' | 'aivideoauto' | 'higgsfield';
 
 export interface AivideoautoModel {
   id: string;
@@ -91,8 +91,8 @@ export interface ApiConfig {
   service: ApiService;
   setService: (service: ApiService) => void;
   // Image provider selection when using GPT for prompts
-  imageProvider?: 'aivideoauto' | 'google';
-  setImageProvider?: (provider: 'aivideoauto' | 'google') => void;
+  imageProvider?: 'aivideoauto' | 'google' | 'higgsfield';
+  setImageProvider?: (provider: 'aivideoauto' | 'google' | 'higgsfield') => void;
   // Google
   googleApiKey: string;
   saveGoogleApiKey: (key: string) => Promise<void>;
@@ -110,13 +110,28 @@ export interface ApiConfig {
   googleVideoModels?: { id: string; name: string }[];
   // OpenAI (prompt-only)
   openaiApiKey?: string;
-  saveOpenaiApiKey?: (key: string) => Promise<void>;
+  saveOpenaiApiKey?: (key: string, options?: { test?: boolean }) => Promise<void>;
   openaiApiStatus?: 'idle' | 'validating' | 'valid' | 'error';
+  openaiApiError?: string;
   openaiTextModel?: string;
   setOpenaiTextModel?: (model: string) => void;
   openaiTextModels?: { id: string; name: string }[];
   useOpenAIForPrompt?: boolean;
   setUseOpenAIForPrompt?: (on: boolean) => void;
+  // Higgsfield
+  higgsfieldApiKey?: string;
+  saveHiggsfieldApiKey?: (key: string, options?: { test?: boolean }) => Promise<void>;
+  higgsfieldSecret?: string;
+  saveHiggsfieldSecret?: (secret: string, options?: { test?: boolean }) => Promise<void>;
+  higgsfieldApiStatus?: 'idle' | 'validating' | 'valid' | 'error' | 'env_configured';
+  higgsfieldApiError?: string;
+  higgsfieldImageModel?: string;
+  setHiggsfieldImageModel?: (model: string) => void;
+  higgsfieldVideoModel?: string;
+  setHiggsfieldVideoModel?: (model: string) => void;
+  higgsfieldImageModels?: { id: string; name: string }[];
+  higgsfieldVideoModels?: { id: string; name: string }[];
+  testHiggsfieldKeys?: () => Promise<void>;
   // Aivideoauto
   aivideoautoToken: string;
   saveAivideoautoToken: (token: string) => Promise<void>;
@@ -145,6 +160,9 @@ export interface UseStoryboardReturn {
   locations: Location[];
   aspectRatio: Aspect;
   idea: string;
+  lyrics: string;
+  visualNotes: string;
+  audioFile: File | null;
   storyOutline: string[];
   updateStoryOutline: (index: number, value: string) => void;
   videoDuration: number;
@@ -153,11 +171,16 @@ export interface UseStoryboardReturn {
   isGeneratingScenes: boolean;
   isBatchGenerating: boolean;
   isGeneratingReferenceImages: boolean;
+  isImporting: boolean;
+  isExporting: boolean;
   batchProgress: BatchProgress | null;
 
   // Scene Management
   setVideoDuration: (duration: number) => void;
   setIdea: (idea: string) => void;
+  setLyrics: (lyrics: string) => void;
+  setVisualNotes: (notes: string) => void;
+  setAudioFile: (file: File | null) => void;
   onUpload: (e: React.ChangeEvent<HTMLInputElement>) => void;
   addBlankScene: () => void;
   updateScene: (index: number, data: Partial<Scene>) => void;
@@ -167,7 +190,7 @@ export interface UseStoryboardReturn {
 
   // Image Generation & Editing
   handleReplaceImage: (index: number) => Promise<void>;
-  generateBlueprintFromIdea: (textOverride?: string) => Promise<void>;
+  generateBlueprintFromIdea: (textOverride?: string, lyrics?: string, visualNotes?: string) => Promise<void>;
   generateScenesFromBlueprint: () => Promise<void>;
   regenerateSceneDetails: (index: number) => Promise<void>;
   generateImageForScene: (index: number) => Promise<void>;
@@ -182,6 +205,8 @@ export interface UseStoryboardReturn {
   generateAllSceneVideos: () => Promise<void>;
   downloadAllSceneImages: () => void;
   downloadAllSceneVideos: () => void;
+  exportAssets: () => Promise<void>;
+  importAssets: (file: File) => Promise<void>;
 
   // Character & Location Management
   addCharacter: () => void;

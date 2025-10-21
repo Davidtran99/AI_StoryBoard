@@ -17,6 +17,7 @@ import { ImageEditModal } from './ImageEditModal';
 import { Progress } from '../ui/Progress';
 import { formatDuration } from '../../lib/utils';
 import { ConfirmationModal } from '../ui/ConfirmationModal';
+import { InteractiveCanvas } from './InteractiveCanvas';
 
 
 // --- SceneDetailModal Component ---
@@ -117,6 +118,18 @@ const SceneDetailModal: React.FC<SceneDetailModalProps> = ({ scene, index, story
                   rows={6} 
                   placeholder={t('imagePromptPlaceholder')}
               />
+          </div>
+          {/* Sketch & Annotations Section */}
+          <div className="border-t border-slate-700/50 pt-4">
+            <Label>Phác thảo & Ghi chú đạo diễn</Label>
+            <div className="mt-2">
+              <InteractiveCanvas 
+                scene={scene}
+                index={index}
+                storyboard={storyboard}
+                onSave={(annotations) => updateScene(index, { sketchAnnotations: annotations })}
+              />
+            </div>
           </div>
         </CardContent>
          <CardFooter className="flex-shrink-0 bg-slate-900/50 border-t border-slate-700/50 flex justify-end">

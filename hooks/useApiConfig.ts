@@ -7,6 +7,7 @@ import type { ApiService, AivideoautoModel, ApiConfig } from '../types';
 import * as aivideoautoService from '../services/aivideoautoService';
 import * as geminiService from '../services/geminiService';
 import * as openaiService from '../services/openaiService';
+import * as higgsfieldService from '../services/higgsfieldService';
 
 const AIVIDEOAUTO_TOKEN_KEY = 'aivideoauto_access_token';
 const GOOGLE_API_KEY_KEY = 'google_gemini_api_key';
@@ -46,15 +47,26 @@ export default function useApiConfig({ onError }: UseApiConfigProps): ApiConfig 
   // OpenAI (prompt-only) State
   const [openaiApiKey, setOpenaiApiKey] = useState<string>('');
   const [openaiApiStatus, setOpenaiApiStatus] = useState<'idle' | 'validating' | 'valid' | 'error'>('idle');
+  const [openaiApiError, setOpenaiApiError] = useState<string>('');
   const [openaiTextModel, setOpenaiTextModel] = useState<string>('gpt-4o');
   const [openaiTextModels, setOpenaiTextModels] = useState<{ id: string; name: string }[]>([]);
   const [useOpenAIForPrompt, setUseOpenAIForPrompt] = useState<boolean>(false);
 
   // Image provider selection (active image service when GPT is used for prompts)
-  const [imageProvider, setImageProvider] = useState<'aivideoauto' | 'google'>(() => {
+  const [imageProvider, setImageProvider] = useState<'aivideoauto' | 'google' | 'higgsfield'>(() => {
     const stored = localStorage.getItem('image_provider');
-    return stored === 'google' ? 'google' : 'aivideoauto';
+    return stored === 'google' || stored === 'higgsfield' ? (stored as any) : 'aivideoauto';
   });
+
+  // Higgsfield State
+  const [higgsfieldApiKey, setHiggsfieldApiKey] = useState<string>('');
+  const [higgsfieldSecret, setHiggsfieldSecret] = useState<string>('');
+  const [higgsfieldApiStatus, setHiggsfieldApiStatus] = useState<'idle' | 'validating' | 'valid' | 'error'>('idle');
+  const [higgsfieldApiError, setHiggsfieldApiError] = useState<string>('');
+  const [higgsfieldImageModels, setHiggsfieldImageModels] = useState<{ id: string; name: string }[]>([]);
+  const [higgsfieldVideoModels, setHiggsfieldVideoModels] = useState<{ id: string; name: string }[]>([]);
+  const [higgsfieldImageModel, setHiggsfieldImageModel] = useState<string>('');
+  const [higgsfieldVideoModel, setHiggsfieldVideoModel] = useState<string>('');
 
   const validateAndSetGoogleKey = useCallback(async (key: string) => {
     if (!key) {
@@ -160,44 +172,66 @@ export default function useApiConfig({ onError }: UseApiConfigProps): ApiConfig 
     }
   }, [onError]);
 
+  const testHiggsfieldKeys = useCallback(async () => {
+    const key = higgsfieldApiKey;
+    const currentSecret = higgsfieldSecret || localStorage.getItem('higgsfield_secret') || '';
+    if (!key) return;
+    try {
+      setHiggsfieldApiStatus('validating');
+      const testResult = await higgsfieldService.testConnection(key, currentSecret);
+      if (!testResult.success) throw new Error(testResult.overallError || 'API key validation failed');
+      const { imageModels, videoModels } = await higgsfieldService.listAvailableModels(key);
+      setHiggsfieldApiStatus('valid');
+      setHiggsfieldApiError('');
+      setHiggsfieldImageModels(imageModels);
+      setHiggsfieldVideoModels(videoModels);
+      if (!imageModels.find(m => m.id === higgsfieldImageModel)) setHiggsfieldImageModel(imageModels[0]?.id || '');
+      if (!videoModels.find(m => m.id === higgsfieldVideoModel)) setHiggsfieldVideoModel(videoModels[0]?.id || '');
+    } catch (e: any) {
+      const message = e instanceof Error ? e.message : 'Lỗi không xác định.';
+      setHiggsfieldApiStatus('error');
+      setHiggsfieldApiError(message);
+      onError(message);
+    }
+  }, [higgsfieldApiKey, higgsfieldSecret, higgsfieldImageModel, higgsfieldVideoModel, onError]);
+
   useEffect(() => {
     const envKey = process.env.API_KEY;
     const storedKey = localStorage.getItem(GOOGLE_API_KEY_KEY);
     
-    if (envKey) {
-        setIsEnvKeyAvailable(true);
-        if (storedKey) {
-            setIsGoogleKeyOverridden(true);
-            validateAndSetGoogleKey(storedKey);
-        } else {
-            setIsGoogleKeyOverridden(false);
-            setGoogleApiKey(envKey);
-            setGoogleApiStatus('env_configured');
-        }
-    } else {
-        setIsEnvKeyAvailable(false);
-        setIsGoogleKeyOverridden(false);
-        if (storedKey) {
-            validateAndSetGoogleKey(storedKey);
-        }
+    // DISABLE all auto-loading - force user to enter manually
+    setIsEnvKeyAvailable(false);
+    setIsGoogleKeyOverridden(false);
+    
+    // Clear stored Google key to force user input
+    if (storedKey) {
+        localStorage.removeItem('google_api_key');
     }
     
     const storedToken = localStorage.getItem(AIVIDEOAUTO_TOKEN_KEY);
+    
+    // Clear stored Aivideoauto token to force user input
     if (storedToken) {
-      validateAndSetAivideoautoToken(storedToken);
+      localStorage.removeItem(AIVIDEOAUTO_TOKEN_KEY);
     }
 
     // Load OpenAI persisted config
     const storedOpenaiKey = localStorage.getItem('openai_api_key');
     const storedOpenaiModel = localStorage.getItem('openai_text_model');
     const storedUseOpenAI = localStorage.getItem('use_openai_for_prompt');
+    
+    // Clear stored OpenAI credentials to force user input
+    if (storedOpenaiKey) {
+      localStorage.removeItem('openai_api_key');
+    }
+    
     if (storedUseOpenAI != null) {
       setUseOpenAIForPrompt(storedUseOpenAI === 'true');
     }
     if (storedOpenaiModel) {
       setOpenaiTextModel(storedOpenaiModel);
     }
-    if (storedOpenaiKey) {
+    if (false) { // Disabled auto-loading of OpenAI key
       (async () => {
         await (async (key: string) => {
           console.log('🔑 [CONFIG] Validating OpenAI API key...');
@@ -220,8 +254,43 @@ export default function useApiConfig({ onError }: UseApiConfigProps): ApiConfig 
     }
     // ensure persisted provider
     const storedProvider = localStorage.getItem('image_provider');
-    if (storedProvider === 'google' || storedProvider === 'aivideoauto') {
+    if (storedProvider === 'google' || storedProvider === 'aivideoauto' || storedProvider === 'higgsfield') {
       setImageProvider(storedProvider);
+    }
+
+    // Load Higgsfield credentials from .env or localStorage
+    const envHiggsKey = (import.meta as any).env?.VITE_HIGGSFIELD_API_KEY;
+    const envHiggsSecret = (import.meta as any).env?.VITE_HIGGSFIELD_SECRET;
+    const storedHiggsKey = localStorage.getItem('higgsfield_api_key');
+    const storedHiggsSecret = localStorage.getItem('higgsfield_secret');
+    
+    // DISABLE all auto-loading - force user to enter manually
+    const higgsKey = null; // Force empty - no auto-loading
+    const higgsSecret = null;
+    
+    // Load secret from localStorage if available (but don't auto-validate)
+    const currentSecret = localStorage.getItem('higgsfield_secret');
+    if (currentSecret) {
+      setHiggsfieldSecret(currentSecret);
+    }
+    
+    if (higgsKey) {
+      (async () => {
+        try {
+          setHiggsfieldApiStatus('validating');
+          await higgsfieldService.validateApiKey(higgsKey);
+          const { imageModels, videoModels } = await higgsfieldService.listAvailableModels(higgsKey);
+          setHiggsfieldApiKey(higgsKey);
+          setHiggsfieldSecret(higgsSecret || '');
+          setHiggsfieldApiStatus(envHiggsKey ? 'env_configured' : 'valid');
+          setHiggsfieldImageModels(imageModels);
+          setHiggsfieldVideoModels(videoModels);
+          if (!imageModels.find(m => m.id === higgsfieldImageModel)) setHiggsfieldImageModel(imageModels[0]?.id || '');
+          if (!videoModels.find(m => m.id === higgsfieldVideoModel)) setHiggsfieldVideoModel(videoModels[0]?.id || '');
+        } catch {
+          setHiggsfieldApiStatus('error');
+        }
+      })();
     }
   }, [validateAndSetGoogleKey, validateAndSetAivideoautoToken]);
 
@@ -269,7 +338,28 @@ export default function useApiConfig({ onError }: UseApiConfigProps): ApiConfig 
       }
   };
 
-  const saveOpenaiApiKey = async (key: string) => {
+  const testOpenaiKey = useCallback(async () => {
+    if (!openaiApiKey) return;
+    try {
+      setOpenaiApiStatus('validating');
+      setOpenaiApiError('');
+      const models = await openaiService.getTextModels(openaiApiKey);
+      setOpenaiTextModels(models);
+      if (!models.find(m => m.id === openaiTextModel)) {
+        const next = models[0]?.id || 'gpt-4o';
+        setOpenaiTextModel(next);
+        localStorage.setItem('openai_text_model', next);
+      }
+      setOpenaiApiStatus('valid');
+    } catch (e) {
+      const message = e instanceof Error ? e.message : 'Lỗi không xác định.';
+      setOpenaiApiStatus('error');
+      setOpenaiApiError(message);
+      onError(message);
+    }
+  }, [openaiApiKey, openaiTextModel, onError]);
+
+  const saveOpenaiApiKey = async (key: string, options?: { test?: boolean }) => {
     if (!key) {
       setOpenaiApiStatus('idle');
       setOpenaiApiKey('');
@@ -277,24 +367,48 @@ export default function useApiConfig({ onError }: UseApiConfigProps): ApiConfig 
       localStorage.removeItem('openai_api_key');
       return;
     }
-    console.log('🔑 [CONFIG] Validating OpenAI API key...');
-    setOpenaiApiStatus('validating');
-    try {
-      const models = await openaiService.getTextModels(key);
-      console.log('🟢 [CONFIG] OpenAI API key validation successful');
-      setOpenaiApiKey(key);
-      setOpenaiApiStatus('valid');
-      setOpenaiTextModels(models);
-      if (!models.find(m => m.id === openaiTextModel)) {
-        setOpenaiTextModel(models[0]?.id || 'gpt-4o');
-        localStorage.setItem('openai_text_model', models[0]?.id || 'gpt-4o');
-      }
-      localStorage.setItem('openai_api_key', key);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'Lỗi không xác định.';
-      console.error('🔴 [CONFIG] OpenAI API key validation failed:', message);
-      setOpenaiApiStatus('error');
+    setOpenaiApiKey(key);
+    localStorage.setItem('openai_api_key', key);
+    setOpenaiApiStatus('idle');
+    if (options?.test) {
+      await testOpenaiKey();
     }
+  };
+
+  const saveHiggsfieldApiKey = async (key: string, options?: { test?: boolean }) => {
+    console.log('🔍 [CONFIG] saveHiggsfieldApiKey called with key:', key?.length ? `${key.substring(0, 8)}...` : 'empty');
+    setHiggsfieldApiKey(key);
+    if (!key) {
+      setHiggsfieldApiStatus('idle');
+      setHiggsfieldApiKey('');
+      setHiggsfieldImageModels([]);
+      setHiggsfieldVideoModels([]);
+      setHiggsfieldImageModel('');
+      setHiggsfieldVideoModel('');
+      localStorage.removeItem('higgsfield_api_key');
+      return;
+    }
+    
+    // Only persist key; do not auto-test unless options?.test === true
+    // Validate basic format locally
+    if (key.length === 64) throw new Error('Vui lòng nhập API Key ID (36 ký tự), không phải Secret (64 ký tự)');
+    if (key.length !== 36) throw new Error('API Key ID phải có 36 ký tự (UUID format)');
+    setHiggsfieldApiKey(key);
+    localStorage.setItem('higgsfield_api_key', key);
+    setHiggsfieldApiStatus('idle');
+    setHiggsfieldApiError('');
+    if (options?.test) await testHiggsfieldKeys();
+  };
+
+  const saveHiggsfieldSecret = async (secret: string, options?: { test?: boolean }) => {
+    setHiggsfieldSecret(secret);
+    if (secret) {
+      localStorage.setItem('higgsfield_secret', secret);
+    } else {
+      localStorage.removeItem('higgsfield_secret');
+    }
+    // Note: Higgsfield API only requires access_token (apiKey), secret is optional
+    if (options?.test) await testHiggsfieldKeys();
   };
 
   useEffect(() => {
@@ -330,11 +444,26 @@ export default function useApiConfig({ onError }: UseApiConfigProps): ApiConfig 
     openaiApiKey,
     saveOpenaiApiKey,
     openaiApiStatus,
+    openaiApiError,
     openaiTextModel,
     setOpenaiTextModel,
     openaiTextModels,
     useOpenAIForPrompt,
     setUseOpenAIForPrompt,
+    // Higgsfield
+    higgsfieldApiKey,
+    saveHiggsfieldApiKey,
+    higgsfieldSecret,
+    saveHiggsfieldSecret,
+    higgsfieldApiStatus,
+    higgsfieldApiError,
+    testHiggsfieldKeys,
+    higgsfieldImageModel,
+    setHiggsfieldImageModel,
+    higgsfieldVideoModel,
+    setHiggsfieldVideoModel,
+    higgsfieldImageModels,
+    higgsfieldVideoModels,
     // Aivideoauto
     aivideoautoToken,
     aivideoautoModel,

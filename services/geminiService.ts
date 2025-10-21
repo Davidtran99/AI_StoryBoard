@@ -6,6 +6,7 @@
 import { GoogleGenAI, Type, Modality, GenerateContentResponse, GenerateImagesResponse } from "@google/genai";
 import type { UploadedImage, Scene, Character, Location, VideoStyle, Aspect } from "../types";
 import { cameraAngleOptions, transitionOptions, colorPaletteOptions, imageShotTypeOptions, cuttingStyleOptions } from '../constants';
+import { parseApiError } from '../lib/utils';
 
 // This will be used as a default negative prompt for image generation.
 const NEGATIVE_PROMPT_NO_TEXT = "subtitles, text, words, letters, captions, watermark, signature, labels, typography, writing, logo, credits, title, branding, user interface elements, overlays";
@@ -71,10 +72,7 @@ export const validateApiKey = async (apiKey: string): Promise<void> => {
     console.log('🟢 [GEMINI API] API key validation successful');
   } catch (error) {
     console.error("🔴 [GEMINI API] API Key validation failed:", error);
-    if (error instanceof Error && (error.message.includes('API key not valid') || error.message.includes('API_KEY_INVALID'))) {
-      throw new Error('API key không hợp lệ. Vui lòng kiểm tra lại.');
-    }
-    throw new Error('Không thể xác thực API key. Vui lòng kiểm tra kết nối và key.');
+    throw new Error(parseApiError(error));
   }
 };
 
@@ -405,7 +403,7 @@ export const generateBlueprintFromIdea = async (
     return result;
   } catch(error) {
     console.error("🔴 [GEMINI API] Blueprint generation failed:", error);
-    throw new Error(`Lỗi tạo kế hoạch chi tiết: ${error instanceof Error ? error.message : String(error)}`);
+    throw new Error(`Lỗi tạo kế hoạch chi tiết: ${parseApiError(error)}`);
   }
 };
 
@@ -489,7 +487,7 @@ export const generateScenesFromBlueprint = async (
     return scenes;
   } catch(error) {
     console.error("🔴 [GEMINI API] Scenes generation failed:", error);
-    throw new Error(`Lỗi triển khai storyboard: ${error instanceof Error ? error.message : String(error)}`);
+    throw new Error(`Lỗi triển khai storyboard: ${parseApiError(error)}`);
   }
 };
 
@@ -677,7 +675,7 @@ export const generateImageFromPrompt = async (
     return { name: `${String(index + 1).padStart(2, '0')}.jpeg`, type: 'image/jpeg', size: 0, dataUrl: `data:image/jpeg;base64,${base64ImageBytes}` };
   } catch (error) {
     console.error("🔴 [GEMINI API] Error generating image from prompt:", error);
-    throw new Error(`Lỗi tạo ảnh: ${error instanceof Error ? error.message : String(error)}`);
+    throw new Error(`Lỗi tạo ảnh: ${parseApiError(error)}`);
   }
 };
 
@@ -713,6 +711,6 @@ export const generateSketchForImage = async (
     return { name: `sketch_${String(index + 1).padStart(2, '0')}.png`, type: 'image/png', size: 0, dataUrl: `data:image/png;base64,${base64ImageBytes}` };
   } catch (error) {
     console.error("Error generating sketch image:", error);
-    throw new Error(`Lỗi tạo phác thảo: ${error instanceof Error ? error.message : String(error)}`);
+    throw new Error(`Lỗi tạo phác thảo: ${parseApiError(error)}`);
   }
 };

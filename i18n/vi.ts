@@ -275,4 +275,20 @@ export const vi = {
   errorCannotAnalyzeLocations: "Không thể phân tích bối cảnh từ kịch bản.",
   errorGeneratingImage: "Lỗi tạo ảnh: {error}",
   errorGeneratingSketch: "Lỗi tạo phác thảo: {error}",
+  
+  // Music & Visual Notes
+  ideaTabGeneral: "Ý tưởng chung",
+  ideaTabMusic: "Music Video",
+  audioUploadLabel: "Tải lên file âm thanh",
+  audioUploadButton: "Chọn file âm thanh",
+  lyricsLabel: "Lời bài hát",
+  lyricsPlaceholder: "Nhập lời bài hát...",
+  visualNotesLabel: "Ghi chú đạo diễn",
+  visualNotesPlaceholder: "Nhập ghi chú đạo diễn...",
+  
+  // Export/Import
+  importAssets: "Import",
+  exportAssets: "Export",
+  importAssetsTooltip: "Import assets từ file ZIP",
+  exportAssetsTooltip: "Export tất cả assets ra file ZIP",
 };

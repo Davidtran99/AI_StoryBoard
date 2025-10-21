@@ -2,8 +2,8 @@
  * @license
  * SPDX-License-Identifier: Apache-2.0
 */
-import React, { useState, useMemo } from 'react';
-import { Wand2, Users, MapPin, Loader2, Images, ClipboardList, Eye } from 'lucide-react';
+import React, { useState, useMemo, useRef } from 'react';
+import { Wand2, Users, MapPin, Loader2, Images, ClipboardList, Eye, FileText, Music, Upload, Download } from 'lucide-react';
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '../ui/Card';
 import { Button } from '../ui/Button';
 import { Textarea } from '../ui/Textarea';
@@ -19,6 +19,22 @@ import { formatDuration } from '../../lib/utils';
 import { Select } from '../ui/Select';
 import { BlueprintPreviewModal } from './BlueprintPreviewModal';
 
+const visualNotesTemplate = `[GHI CHÚ CỦA ĐẠO DIỄN]
+
+- Phong cách hình ảnh (Image Style): [VD: Cinematic, màu film vintage, hơi mờ ảo, tông màu xanh và cam chủ đạo.]
+
+- Mô tả nhân vật (Character Descriptions): 
+  - Nhân vật chính: [VD: Một nghệ sĩ trẻ, tóc rối, ánh mắt mơ màng, trang phục theo phong cách bohemian.]
+  - Nhân vật phụ: [VD: Một cô gái bí ẩn, luôn xuất hiện từ xa, mặc váy trắng.]
+
+- Phong cách bối cảnh (Location Style): [VD: Các con phố cổ của Hà Nội vào buổi sáng sớm, vắng lặng và yên bình. Ưu tiên các góc máy rộng.]
+
+- Phong cách video (Video Style): [VD: Chuyển động máy quay chậm, mượt mà, sử dụng nhiều cảnh slow-motion. Tập trung vào biểu cảm cận mặt.]
+
+- Mood & Tone: [VD: Lãng mạn, hoài niệm, có chút buồn man mác.]
+
+- Nhịp điệu (Rhythm): [VD: Bắt đầu chậm rãi, nhanh dần ở điệp khúc, và kết thúc bằng một cảnh tĩnh lặng.]`;
+
 interface ImportManagerProps {
   storyboard: UseStoryboardReturn;
   videoStyle: VideoStyle;
@@ -28,12 +44,18 @@ interface ImportManagerProps {
 
 export const ImportManager: React.FC<ImportManagerProps> = ({ storyboard, videoStyle, setVideoStyle, t }) => {
   const [activeTab, setActiveTab] = useState('characters');
+  const [activeIdeaTab, setActiveIdeaTab] = useState('idea');
   const [previewingImage, setPreviewingImage] = useState<UploadedImage | null>(null);
   const [editingEntity, setEditingEntity] = useState<{ type: 'character' | 'location', index: number } | null>(null);
   const [isPreviewModalOpen, setIsPreviewModalOpen] = useState(false);
+  const audioInputRef = useRef<HTMLInputElement>(null);
+  const importInputRef = useRef<HTMLInputElement>(null);
   
   const { 
     idea, setIdea,
+    lyrics, setLyrics,
+    visualNotes, setVisualNotes,
+    audioFile, setAudioFile,
     generateBlueprintFromIdea, isGeneratingFromText,
     generateScenesFromBlueprint, isGeneratingScenes, 
     generateAllReferenceImages, isGeneratingReferenceImages,
@@ -42,12 +64,38 @@ export const ImportManager: React.FC<ImportManagerProps> = ({ storyboard, videoS
     scenes, isSceneBusy, aspectRatio, storyOutline, updateStoryOutline,
     videoDuration, setVideoDuration,
     batchProgress,
+    exportAssets, importAssets, isImporting, isExporting,
   } = storyboard;
+
+  const handleGenerate = () => {
+    if (activeIdeaTab === 'music') {
+      generateBlueprintFromIdea(undefined, lyrics, visualNotes);
+    } else {
+      generateBlueprintFromIdea(idea);
+    }
+  };
+  
+  const handleAudioFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+    if (event.target.files && event.target.files.length > 0) {
+      setAudioFile(event.target.files[0]);
+    }
+  };
+
+  const handleAssetImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+        await importAssets(file);
+    }
+    if (e.target) {
+        e.target.value = ''; // Reset input so the same file can be selected again
+    }
+  };
 
   const hasAssetsToGenerate = characters.some(c => !c.image && c.description) || locations.some(l => !l.image && l.description);
   const refImageBatchProgress = batchProgress && batchProgress.task === 'ảnh tham chiếu' ? batchProgress : null;
   const showGenerateScenesButton = (characters.length > 0 || locations.length > 0) && scenes.length === 0;
   const hasBlueprint = characters.length > 0 || locations.length > 0 || storyOutline.length > 0;
+  const isGenerateButtonDisabled = isGeneratingFromText || (activeIdeaTab === 'idea' && !idea.trim()) || (activeIdeaTab === 'music' && (!lyrics.trim() || !audioFile));
 
   const handleOpenEditModal = (type: 'character' | 'location', index: number) => {
     setEditingEntity({ type, index });
@@ -74,6 +122,11 @@ export const ImportManager: React.FC<ImportManagerProps> = ({ storyboard, videoS
   const tabs = [
     { id: 'characters', label: t('tabCharacters'), icon: Users },
     { id: 'locations', label: t('tabLocations'), icon: MapPin },
+  ];
+
+  const ideaTabs = [
+    { id: 'idea', label: t('ideaTabGeneral'), icon: FileText },
+    { id: 'music', label: t('ideaTabMusic'), icon: Music },
   ];
 
   const AiResultsPanel = () => {
@@ -167,15 +220,56 @@ export const ImportManager: React.FC<ImportManagerProps> = ({ storyboard, videoS
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 items-start">
                 {/* Left Column: Input */}
                 <div className="space-y-4">
-                    <Textarea
-                        value={idea}
-                        onChange={(e) => setIdea(e.target.value)}
-                        placeholder={t('ideaPlaceholder')}
-                        rows={8}
-                        disabled={isGeneratingFromText}
-                        className="text-base leading-relaxed"
-                    />
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-4 items-start">
+                    <div className="flex items-center gap-2 p-1 rounded-lg bg-slate-800/50 border border-slate-700/50 mb-4">
+                        {ideaTabs.map(tab => (
+                            <button 
+                                key={tab.id}
+                                onClick={() => setActiveIdeaTab(tab.id)}
+                                className={`flex-1 flex items-center justify-center gap-2 rounded-md px-3 py-1.5 text-base font-medium transition-all duration-300 ${
+                                    activeIdeaTab === tab.id
+                                        ? 'bg-slate-700 text-white shadow-sm'
+                                        : 'text-slate-400 hover:text-white hover:bg-slate-800/50'
+                                }`}
+                            >
+                                <tab.icon className="h-4 w-4" />
+                                {tab.label}
+                            </button>
+                        ))}
+                    </div>
+
+                    {activeIdeaTab === 'idea' ? (
+                      <div className="animate-in fade-in-0 duration-300 space-y-4">
+                        <Textarea
+                            value={idea}
+                            onChange={(e) => setIdea(e.target.value)}
+                            placeholder={t('ideaPlaceholder')}
+                            rows={14}
+                            disabled={isGeneratingFromText}
+                            className="text-base leading-relaxed"
+                        />
+                      </div>
+                    ) : (
+                      <div className="animate-in fade-in-0 duration-300 space-y-4">
+                        <div>
+                          <Label>{t('audioUploadLabel')}</Label>
+                           <input type="file" accept="audio/*" ref={audioInputRef} onChange={handleAudioFileChange} className="hidden" />
+                           <Button variant="outline" onClick={() => audioInputRef.current?.click()} className="w-full">
+                               <Upload className="h-4 w-4 mr-2" />
+                               {audioFile ? audioFile.name : t('audioUploadButton')}
+                           </Button>
+                        </div>
+                        <div>
+                           <Label htmlFor="lyrics">{t('lyricsLabel')}</Label>
+                           <Textarea id="lyrics" value={lyrics} onChange={e => setLyrics(e.target.value)} placeholder={t('lyricsPlaceholder')} rows={5} disabled={isGeneratingFromText} />
+                        </div>
+                        <div>
+                           <Label htmlFor="visual-notes">{t('visualNotesLabel')}</Label>
+                           <Textarea id="visual-notes" value={visualNotes} onChange={e => setVisualNotes(e.target.value)} placeholder={t('visualNotesPlaceholder')} rows={8} disabled={isGeneratingFromText} className="font-mono text-sm" />
+                        </div>
+                      </div>
+                    )}
+                    
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-4 items-start pt-4">
                         <div>
                             <Label htmlFor="video-duration">{t('videoDurationLabel')}</Label>
                             <Input
@@ -206,7 +300,7 @@ export const ImportManager: React.FC<ImportManagerProps> = ({ storyboard, videoS
                         </div>
                     </div>
                     <div className="flex justify-end mt-4">
-                        <Button onClick={() => generateBlueprintFromIdea()} disabled={!idea.trim() || isGeneratingFromText}>
+                        <Button onClick={handleGenerate} disabled={isGenerateButtonDisabled}>
                             {isGeneratingFromText ? <Loader2 className="h-4 w-4 mr-2 animate-spin"/> : <Wand2 className="h-4 w-4 mr-2" />}
                             {t('generateBlueprintButton')}
                         </Button>
@@ -250,7 +344,25 @@ export const ImportManager: React.FC<ImportManagerProps> = ({ storyboard, videoS
                         </button>
                     ))}
                 </div>
-                <div className="flex-grow flex items-center justify-end gap-4">
+                <div className="flex-grow flex items-center justify-end gap-2">
+                    <input
+                        type="file"
+                        ref={importInputRef}
+                        onChange={handleAssetImport}
+                        className="hidden"
+                        accept=".zip"
+                    />
+                    <Button onClick={() => importInputRef.current?.click()} variant="secondary" size="sm" disabled={isImporting || isExporting} title={t('importAssetsTooltip')}>
+                        {isImporting ? <Loader2 className="h-4 w-4 mr-2 animate-spin"/> : <Upload className="h-4 w-4 mr-2"/>}
+                        {t('importAssets')}
+                    </Button>
+                    <Button onClick={exportAssets} variant="secondary" size="sm" disabled={isImporting || isExporting || (characters.length === 0 && locations.length === 0)} title={t('exportAssetsTooltip')}>
+                        {isExporting ? <Loader2 className="h-4 w-4 mr-2 animate-spin"/> : <Download className="h-4 w-4 mr-2"/>}
+                        {t('exportAssets')}
+                    </Button>
+
+                    <div className="h-6 w-px bg-slate-700 mx-2"></div>
+
                     {refImageBatchProgress && (
                         <div className="flex-grow max-w-xs text-right">
                             <p className="text-sm text-slate-300 mb-1">

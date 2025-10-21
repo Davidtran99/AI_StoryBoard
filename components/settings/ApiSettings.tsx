@@ -101,6 +101,9 @@ export const ApiSettings: React.FC<ApiSettingsProps> = ({ apiConfig, t }) => {
                 placeholder={t('apiKeyPlaceholder')}
               />
             </div>
+            <p className="text-sm text-slate-400">
+              Lấy API Key tại: <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener noreferrer" className="text-teal-400 hover:underline">aistudio.google.com</a>
+            </p>
             <div className="flex justify-between items-center pt-2">
               <div className="flex-grow pr-4">
                 {renderGoogleApiStatus()}

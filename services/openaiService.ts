@@ -3,6 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 import type { Character, Location, Scene, VideoStyle } from '../types';
+import { parseApiError } from '../lib/utils';
 
 const DEFAULT_TEXT_MODELS: { id: string; name: string }[] = [
   { id: 'gpt-4o', name: 'GPT‑4o' },
@@ -66,7 +67,7 @@ function sortModels(models: { id: string; name: string }[]): { id: string; name:
 
 export const getTextModels = async (apiKey: string): Promise<{ id: string; name: string }[]> => {
   console.log('🌐 [OPENAI API] Loading text models list...');
-  if (!apiKey) throw new Error('Missing OpenAI API key');
+  if (!apiKey) throw new Error('Thiếu OpenAI API key');
 
   // Attempt proxy first (dev Vite middleware or production proxy)
   try {
@@ -117,9 +118,9 @@ export const getTextModels = async (apiKey: string): Promise<{ id: string; name:
       },
     });
     if (!res.ok) {
-      if (res.status === 429) throw new Error('Rate limit exceeded. Please try again later.');
-      if (res.status === 401) throw new Error('Invalid API key.');
-      throw new Error(`OpenAI API error: ${res.status}`);
+      if (res.status === 429) throw new Error('Quá giới hạn gọi API. Vui lòng thử lại sau.');
+      if (res.status === 401) throw new Error('API key không hợp lệ.');
+      throw new Error(`Lỗi OpenAI API: ${res.status}`);
     }
     const json = await res.json();
     const raw: any[] = Array.isArray(json.data) ? json.data : [];
@@ -152,7 +153,7 @@ export const generateBlueprintFromIdea = async (
   videoStyle: VideoStyle
 ): Promise<{ characters: Omit<Character, 'id' | 'image' | 'status'>[]; locations: Omit<Location, 'id' | 'image' | 'status'>[]; story_outline: string[] }> => {
   console.log('🔵 [OPENAI API] Generating blueprint from idea...', { numScenes, videoStyle });
-  if (!apiKey) throw new Error('Missing OpenAI API key');
+  if (!apiKey) throw new Error('Thiếu OpenAI API key');
 
   const proxyBase = String(((import.meta as any).env?.OPENAI_PROXY_URL || '/api/openai')).replace(/\/$/, '');
   const proxyChatUrl = `${proxyBase}/chat`;
@@ -210,35 +211,35 @@ Make sure the story flows logically and each scene advances the narrative. Focus
       response = await postChat(directChatUrl);
     }
     if (!response.ok) {
-      if (response.status === 429) throw new Error('Rate limit exceeded. Please try again later.');
-      if (response.status === 401) throw new Error('Invalid API key.');
-      throw new Error(`OpenAI API error: ${response.status}`);
+      if (response.status === 429) throw new Error('Quá giới hạn gọi API. Vui lòng thử lại sau.');
+      if (response.status === 401) throw new Error('API key không hợp lệ.');
+      throw new Error(`Lỗi OpenAI API: ${response.status}`);
     }
     const data = await response.json();
     const content = data.choices[0]?.message?.content;
     
     if (!content) {
-      throw new Error('No response from OpenAI');
+      throw new Error('Không nhận được phản hồi từ OpenAI');
     }
 
     // Extract JSON from the response
     const jsonMatch = content.match(/\{[\s\S]*\}/);
     if (!jsonMatch) {
-      throw new Error('Invalid response format from OpenAI');
+      throw new Error('Định dạng phản hồi không hợp lệ từ OpenAI');
     }
 
     const result = JSON.parse(jsonMatch[0]);
     
     // Validate the response structure
     if (!result.characters || !result.locations || !result.story_outline) {
-      throw new Error('Invalid blueprint structure from OpenAI');
+      throw new Error('Cấu trúc blueprint không hợp lệ từ OpenAI');
     }
 
     console.log('✅ [OPENAI API] Blueprint generated successfully');
     return result;
   } catch (error) {
     console.error('🔴 [OPENAI API] Blueprint generation failed:', error);
-    throw error;
+    throw new Error(`Lỗi tạo kế hoạch chi tiết: ${parseApiError(error)}`);
   }
 };
 
@@ -248,7 +249,7 @@ export const generateScenesFromBlueprint = async (
   numScenes: number
 ): Promise<Partial<Scene>[]> => {
   console.log('🔵 [OPENAI API] Generating scenes from blueprint...', { numScenes });
-  if (!apiKey) throw new Error('Missing OpenAI API key');
+  if (!apiKey) throw new Error('Thiếu OpenAI API key');
 
   const proxyBase = String(((import.meta as any).env?.OPENAI_PROXY_URL || '/api/openai')).replace(/\/$/, '');
   const proxyChatUrl = `${proxyBase}/chat`;
@@ -321,35 +322,35 @@ Make sure each scene is visually distinct and advances the story. Focus on cinem
       response = await postChat(directChatUrl);
     }
     if (!response.ok) {
-      if (response.status === 429) throw new Error('Rate limit exceeded. Please try again later.');
-      if (response.status === 401) throw new Error('Invalid API key.');
-      throw new Error(`OpenAI API error: ${response.status}`);
+      if (response.status === 429) throw new Error('Quá giới hạn gọi API. Vui lòng thử lại sau.');
+      if (response.status === 401) throw new Error('API key không hợp lệ.');
+      throw new Error(`Lỗi OpenAI API: ${response.status}`);
     }
     const data = await response.json();
     const content = data.choices[0]?.message?.content;
     
     if (!content) {
-      throw new Error('No response from OpenAI');
+      throw new Error('Không nhận được phản hồi từ OpenAI');
     }
 
     // Extract JSON array from the response
     const jsonMatch = content.match(/\[[\s\S]*\]/);
     if (!jsonMatch) {
-      throw new Error('Invalid response format from OpenAI');
+      throw new Error('Định dạng phản hồi không hợp lệ từ OpenAI');
     }
 
     const result = JSON.parse(jsonMatch[0]);
     
     // Validate the response structure
     if (!Array.isArray(result) || result.length === 0) {
-      throw new Error('Invalid scenes structure from OpenAI');
+      throw new Error('Cấu trúc scenes không hợp lệ từ OpenAI');
     }
 
     console.log('✅ [OPENAI API] Scenes generated successfully');
     return result;
   } catch (error) {
     console.error('🔴 [OPENAI API] Scenes generation failed:', error);
-    throw error;
+    throw new Error(`Lỗi triển khai storyboard: ${parseApiError(error)}`);
   }
 };
 
