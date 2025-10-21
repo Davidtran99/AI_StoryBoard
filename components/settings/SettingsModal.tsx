@@ -318,7 +318,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                       <Input
                         className="w-full"
                         type="password"
-                        placeholder="hf_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+                        placeholder="Dán API key của bạn vào đây"
                         value={apiConfig.higgsfieldApiKey || ''}
                         onChange={(e) => apiConfig.saveHiggsfieldApiKey && apiConfig.saveHiggsfieldApiKey(e.target.value, { test: false })}
                       />
@@ -328,7 +328,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                       <Input
                         className="w-full"
                         type="password"
-                        placeholder="Để trống nếu không cần"
+                        placeholder="Dán API key của bạn vào đây"
                         value={apiConfig.higgsfieldSecret || ''}
                         onChange={(e) => apiConfig.saveHiggsfieldSecret && apiConfig.saveHiggsfieldSecret(e.target.value, { test: false })}
                       />
