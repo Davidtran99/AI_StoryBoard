@@ -1,0 +1,8 @@
+✅ CODE VERIFIED - READY TO BUILD DOCKER
+
+✅ whisper.py: faster_whisper chỉ import khi use="local"
+✅ .env: SPEECH_TO_TEXT_USE=OPENAI_WHISPER
+✅ Dockerfile: đã skip faster_whisper
+✅ Logic: đúng flow
+
+Tất cả đã sẵn sàng để build Docker!
